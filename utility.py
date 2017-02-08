@@ -1,0 +1,14 @@
+## Parameters
+
+# BAM
+FETCH_FLANK = 20
+
+## Strings
+
+# SVTYPE
+SVTYPE_DEL = 'DEL'
+
+# VCF
+VCF_SVTYPE = 'SVTYPE'
+VCF_END = 'END'
+VCF_CIPOS = 'CIPOS'
