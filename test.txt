@@ -1,0 +1,196 @@
+SVPOS: 869423
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 2566176
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 2911549
+Read Depth Genotype: HOM REF
+Splitter Genotype: HET
+
+SVPOS: 2919035
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 7570071
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 9595626
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 10482507
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 11051248
+Read Depth Genotype: HET
+Splitter Genotype: HOM ALT
+
+SVPOS: 11682894
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 16151934
+Read Depth Genotype: HOM REF
+Splitter Genotype: HET
+
+SVPOS: 19151832
+Read Depth Genotype: HOM REF
+Splitter Genotype: HET
+
+SVPOS: 20931959
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 21786421
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 25158704
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 26489824
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 28247808
+Read Depth Genotype: HOM REF
+Splitter Genotype: HOM ALT
+
+SVPOS: 31124341
+Read Depth Genotype: HOM REF
+Splitter Genotype: HOM ALT
+
+SVPOS: 31575081
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 58343224
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 35101422
+Read Depth Genotype: HET
+Splitter Genotype: HOM ALT
+
+SVPOS: 35627082
+Read Depth Genotype: HET
+Splitter Genotype: HOM ALT
+
+SVPOS: 37816474
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 38077350
+Read Depth Genotype: HOM REF
+Splitter Genotype: HOM ALT
+
+SVPOS: 39970028
+Read Depth Genotype: HOM REF
+Splitter Genotype: HOM ALT
+
+SVPOS: 39998257
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 42743159
+Read Depth Genotype: HET
+Splitter Genotype: HOM ALT
+
+SVPOS: 43857471
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 45417605
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 46207296
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 46366126
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 53594100
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 53594100
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 53595129
+Read Depth Genotype: HOM REF
+Splitter Genotype: HET
+
+SVPOS: 56401294
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 56831125
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 56887712
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 56996032
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 57242626
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 58743914
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 60048637
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 62390603
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 63151836
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 63705367
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 66024189
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 66263922
+Read Depth Genotype: HET
+Splitter Genotype: HET
+
+SVPOS: 67201223
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 68008000
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 69807002
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
+SVPOS: 69943726
+Read Depth Genotype: HOM ALT
+Splitter Genotype: HOM ALT
+
