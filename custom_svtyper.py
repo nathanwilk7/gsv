@@ -9,6 +9,8 @@ from argparse import RawTextHelpFormatter
 
 ### Nate's additions
 
+import pysam, json, os.path
+
 ## Params
 
 # BAM?
@@ -33,6 +35,8 @@ READ_LENGTH = 'read_length'
 MEAN = 'mean'
 SD = 'sd'
 PREVALENCE = 'prevalence'
+MAPPED = 'mapped'
+UNMAPPED = 'unmapped'
 
 # SVTYPE
 SVTYPE_BND = 'BND'
@@ -46,90 +50,8 @@ VCF_HOM_REF_CODE = '0/0'
 VCF_HET_CODE = '0/1'
 VCF_HOM_ALT_CODE = '1/1'
 
-class BamList:
-    """
-    Wrapper class for list of BAM files.
-    """
-    def __init__ (self, bam_string):
-        """
-        Save a list of the files specified in the BAM string as pysam AlignmentFiles. Assumes that 
-        they are comma seperated.
-        """
-        self.bam_list = [pysam.AlignmentFile(b, 'rb') for b in bam_string.split(',')]
-
-    def get_sample_list (self, lib_info, num_samp, min_lib_prevalence):
-        sample_list = []
-        for i in xrange(len(self.bam_list)):
-            if lib_info is None:
-                sample = Sample.from_bam(bam_list[i], num_samp, min_lib_prevalence)
-            else:
-                sample = Sample.from_lib_info(bam_list[i], lib_info, min_lib_prevalence)
-        sample.set_exp_seq_depth(min_aligned)
-        sample.set_exp_spanning_depth(min_aligned)
-        sample_list.append(sample)
-        return sample_list
-
-class Sample:
-    def __init__ (self, name, bam, num_samp, lib_dict, rg_to_lib, min_lib_prevalence, 
-                  bam_mapped, bam_unmapped):
-        """
-        Create a sample and only consider libraries active if their prevalence is 
-        greater than or equal to the minimum library prevalence specified. Each 
-        Sample holds its BAM and library information.
-        """
-        self.name = name
-        self.bam = bam
-        self.lib_dict = lib_dict
-        self.rg_to_lib = rg_to_lib
-        self.bam_mapped = bam_mapped
-        self.bam_unmapped = bam_unmapped
-        
-        # Get active libraries
-        self.active_libs = []
-        for lib in lib_dict.values():
-            if lib.prevalence >= min_lib_prevalence:
-                self.active_libs.append(lib)
-
-    # constructor from supplied JSON descriptor
-    @classmethod
-    def from_lib_info (cls, bam, lib_info, min_lib_prevalence):
-        """
-        Constructor from JSON library info file.
-        """
-        name = bam.header[READ_GROUP_TAG][0][SAMPLE_TAG]
-        num_samp = 0
-        rg_to_lib = {}
-        lib_dict = {}
-        
-        try:
-            for i in xrange(len(lib_info[name][LIBRARY_ARRAY])):
-                lib = lib_info[name][LIBRARY_ARRAY][i]
-                lib_name = lib[LIBRARY_NAME]
-                
-                # make library object
-                lib_dict[lib_name] = Library.from_lib_info(name, i, bam, lib_info)
-                
-                # make a map from readgroup IDs to library objects
-                for rg in lib['readgroups']:
-                    rg_to_lib[rg] = lib_dict[lib_name]
-        except KeyError:
-            sys.stderr.write('Error: sample %s not found in JSON library file.\n' % name)
-            exit(1)
-            
-        return cls(name,
-                   bam,
-                   num_samp,
-                   lib_dict,
-                   rg_to_lib,
-                   min_lib_prevalence,
-                   lib_info[name]['mapped'],
-                   lib_info[name]['unmapped'])
-
 class Library:
-    def __init__(self, name, bam, readgroups, read_length, hist, dens,
-                 mean, sd, prevalence, num_samp):
-
-        # parse arguments
+    def __init__ (self, name, bam, readgroups, read_length, hist, dens, mean, sd, prevalence, num_samp):
         self.name = name
         self.bam = bam
         self.num_samp = num_samp
@@ -141,72 +63,177 @@ class Library:
         self.sd = sd
         self.prevalence = prevalence
 
-        # if information is missing, compute it
-        if self.read_length is None:
-            self.calc_read_length()
-        if self.hist is None:
-            self.calc_insert_hist()
-        if self.dens is None:
-            self.calc_insert_density()
-        if self.prevalence is None:
-            self.calc_lib_prevalence()
+class Sample:
+    def __init__ (self, name, bam, num_samp, lib_dict, rg_to_lib, 
+                  bam_mapped, bam_unmapped):
+        self.name = name
+        self.bam = bam
+        self.lib_dict = lib_dict
+        self.rg_to_lib = rg_to_lib
+        self.bam_mapped = bam_mapped
+        self.bam_unmapped = bam_unmapped
+        
+        # get active libraries
+        self.active_libs = []
+        for lib in lib_dict.values():
+            if lib.prevalence >= MIN_LIB_PREVALENCE:
+                self.active_libs.append(lib)
 
-    @classmethod
-    def from_lib_info(cls, sample_name, lib_index, bam, lib_info):
-        """
-        Create a library from a lib_info JSON object?
-        """
-        lib = lib_info[sample_name][LIBRARY_ARRAY][lib_index]
-
-        # convert the histogram keys to integers (from strings in JSON)
-        lib_hist = {int(k):int(v) for k,v in lib[HISTOGRAM].items()}
-
-        return cls(lib[LIBRARY_NAME], bam, lib[READGROUPS], int(lib[READ_LENGTH]), lib_hist,
-                   None, float(lib[MEAN]), float(lib[SD]), float(lib[PREVALENCE]), 0)
-
-    def calc_read_length(self):
-        # TODO: Brent/Tom - Why is the read length set to 1000 here?
-        max_rl = 0
-        counter = 0
-        num_samp = 10
-        self.read_length = 1000
-        return
-        for read in self.bam.fetch():
-            # NOTE: does read group matter? Will I need to add RGs to the BAM?
-            if read.get_tag('RG') not in self.readgroups:
-                continue
-            if read.infer_query_length() > max_rl:
-                max_rl = read.infer_query_length()
-            if counter == num_samp:
-                break
-            counter += 1
-        self.read_length = max_rl
-
-def file_exists (file_path):
-    return file_path is not None and os.path.isfile(file_path)
-
-def parse_lib_info (lib_info_path):
+    def get_bam_list (bam_string):
     """
-    Parses the library info file specifed as json and returns it. If the file doesn't exist, 
-    then returns None
+    Get a list of the files specified in the BAM string as pysam AlignmentFiles. Assumes that 
+    they are comma seperated.
     """
-    if file_exists(lib_info_path):
-        lib_info_file = open(lib_info_path, 'r')
-        return json.load(lib_info_file)
+    self.bam_list = [pysam.AlignmentFile(b, 'rb') for b in bam_string.split(',')]
+
+def get_lib_info (lib_info_path):
+    """
+    Return the specified file as json or None
+    """
+    if lib_info_path is not None and os.path.isfile(lib_info_path):
+        return json.load(open(lib_info_path, 'r'))
     else:
         return None
 
+def calc_read_length (library):
+    # TODO: Here
+    max_rl = 0
+    counter = 0
+    num_samp = 10
+    library.read_length = 1000
+    # return I'm not sure why this was here
+    for read in library.bam.fetch():
+        # NOTE: does read group matter? Will I need to add RGs to the BAM?
+        if read.get_tag(READ_GROUP_TAG) not in self.readgroups:
+            continue
+        if read.infer_query_length() > max_rl:
+            max_rl = read.infer_query_length()
+        if counter == num_samp:
+            break
+        counter += 1
+    self.read_length = max_rl
+
+def calc_insert_hist (library):
+    counter = 0
+    skip = 0
+    skip_counter = 0
+    mads = 10
+    ins_list = []
+    valueCounts = Counter()
+    
+    self.hist = valueCounts
+    self.mean = 0
+    self.sd = 0
+    # return
+
+    # Each entry in valueCounts is a value, and its count is
+    # the number of instances of that value observed in the dataset.
+    # So valueCount[5] is the number of times 5 has been seen in the data.
+    for read in self.bam:
+        if skip_counter < skip:
+            skip_counter += 1
+            continue
+        if (read.is_reverse
+            or not read.mate_is_reverse
+            or read.is_unmapped
+            or read.mate_is_unmapped
+            or not is_primary(read)
+            or read.template_length <= 0
+            or read.get_tag('RG') not in self.readgroups):
+            continue
+        else:
+            valueCounts[read.template_length] += 1
+            counter += 1
+        if counter == self.num_samp:
+            break
+        
+    if len(valueCounts) == 0:
+        sys.stderr.write('Error: failed to build insert size histogram for paired-end reads.\n\
+Please ensure BAM file (%s) has inward facing, paired-end reads.\n' % self.bam.filename)
+        exit(1)
+
+    # remove outliers
+    med = median(valueCounts)
+    u_mad = upper_mad(valueCounts, med)
+    for x in [x for x in list(valueCounts) if x > med + mads * u_mad]:
+        del valueCounts[x]
+
+    self.hist = valueCounts
+    self.mean = mean(self.hist)
+    self.sd = stdev(self.hist)
+
+
+def library_from_lib_info (sample_name, lib_index, bam, lib_info):
+    """
+    Parse library from json file info.
+    """
+    lib = lib_info[sample_name][LIBRARY_ARRAY][lib_index]
+    
+    # convert the histogram keys to integers (from strings in JSON)
+    lib_hist = {int(k):int(v) for k,v in lib[HISTOGRAM].items()}
+    
+    return Library(lib[LIBRARY_NAME],
+               bam,
+               lib[READGROUPS],
+               int(lib[READ_LENGTH]),
+               lib_hist,
+               None,
+               float(lib[MEAN]),
+               float(lib[SD]),
+               float(lib[PREVALENCE]),
+               0)
+
+def sample_from_lib_info (bam, lib_info):
+    """
+    Get sample from saved json file with info.
+    """
+    # Get the name of the sample/library? from the BAM
+    name = bam.header[READ_GROUP_TAG][0][SAMPLE_TAG]
+    num_samp = 0
+    rg_to_lib = {}
+    lib_dict = {}
+    
+    try:
+        for i in xrange(len(lib_info[name][LIBRARY_ARRAY])):
+            lib = lib_info[name][LIBRARY_ARRAY][i]
+            lib_name = lib[LIBRARY_NAME]
+            
+            # make library object
+            lib_dict[lib_name] = library_from_lib_info(name, i, bam, lib_info)
+
+            # make a map from readgroup IDs to library objects
+            for rg in lib[READGROUPS]:
+                rg_to_lib[rg] = lib_dict[lib_name]
+    except KeyError:
+        exit(1)
+
+    return Sample(name,
+                  bam,
+                  num_samp,
+                  lib_dict,
+                  rg_to_lib,
+                  lib_info[name][MAPPED],
+                  lib_info[name][UNMAPPED])
+
+def get_sample_list (bam_list, lib_info, min_lib_prevalence, min_aligned):
+    """
+    build the sample libraries, either from the lib_info JSON or empirically from the BAMs
+    """
+    sample_list = list()
+    for i in xrange(len(bam_list)):
+        if lib_info is None:
+            sample = sample_from_bam(bam_list[i], num_samp, min_lib_prevalence)
+        else:
+            sample = sample_from_lib_info(bam_list[i], lib_info, min_lib_prevalence)
+
+        sample.set_exp_seq_depth(min_aligned)
+        sample.set_exp_spanning_depth(min_aligned)
+        sample_list.append(sample)
+
 def sv_genotype (bam_string, vcf_in, vcf_out, min_aligned, split_weight, disc_weight, num_samp, 
                  lib_info_path, debug, alignment_outpath):
-    """
-    The big enchilada...
-    """
     bam_list = get_bam_list(bam_string)
-
-    # None if file doesn't exist
-    lib_info = parse_lib_info(lib_info_path)
-
-    
+    lib_info = get_lib_info(lib_info_path)
 
 ###
 
@@ -1630,7 +1657,7 @@ def pnon_ref(posA, posB, read):
     else:
         return 0, 1 - p_non_ref
 
-def sv_genotype(bam_string,
+def sv_genotypeOld(bam_string,
                 vcf_in,
                 vcf_out,
                 min_aligned,
