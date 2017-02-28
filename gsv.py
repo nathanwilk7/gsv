@@ -5,7 +5,7 @@ TODO: VCF output pretty print and file match up and take care of fields with val
 
 import pdb # TODO: debug
 
-import pysam, argparse
+import pysam, argparse, re
 
 class Variant:
     """
@@ -24,6 +24,7 @@ class Variant:
         self.filter = None
         self.info = {}
         self.format = {}
+
         
 def get_parsed_args ():
     """
@@ -35,6 +36,18 @@ def get_parsed_args ():
     parser.add_argument('-v', '--input_vcf', help='Path to input VCF file')
     parser.add_argument('-o', '--output_vcf', help='Path to output VCF file')
     return parser.parse_args()
+
+# adapted from Matt Shirley (http://coderscrowd.com/app/public/codes/view/171)
+def cigarstring_to_tuple(cigarstring):
+    """
+
+    """
+    cigar_dict = {'M':0, 'I':1,'D':2,'N':3, 'S':4, 'H':5, 'P':6, '=':7, 'X':8}
+    pattern = re.compile('([MIDNSHPX=])')
+    values = pattern.split(cigarstring)[:-1] ## turn cigar into tuple of values
+    paired = (values[n:n+2] for n in range(0, len(values), 2)) ## pair values by twos
+    return [(cigar_dict[pair[1]], int(pair[0])) for pair in paired]
+
 
 # TODO: check chromosome length to make sure query bounds don't go too far if necessary, test it to find out...
 def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
@@ -49,11 +62,55 @@ def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     # if svtype == util.SVTYPE_DEL:
     return max(position + conf_int[0] - fetch_flank, 0), min(position + conf_int[1] + fetch_flank + 1, chrom_length)
 
-def is_ref_support (read, chrom, pos, conf_int, min_aligned, min_pct_aligned):
+# TODO: Consider conf_int
+def spans_breakpoint (read, chrom, pos, conf_int, min_aligned, min_pct_aligned):
     """
 
     """
     return read.get_overlap(max(0, pos - min_aligned), pos + min_aligned) >= 2 * min_aligned * min_pct_aligned
+
+# TODO: Consider conf_int
+def split_by_breakpoint (read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
+    """
+
+    """
+    if not read.has_tag('SA'):
+        return False
+    
+    split_left = read.reference_end >= left_pos - split_slop and read.reference_end <= left_pos + split_slop
+    split_right = read.reference_start >= right_pos - split_slop and read.reference_start <= right_pos + split_slop
+    if not split_left and not split_right:
+        return False
+    
+    split_alignment_list = read.get_tag('SA').rstrip(';').split(';')
+    mates = []
+    for split_alignment in split_alignment_list:
+        sa = split_alignment.split(',')
+        mate = {}
+        mate['chrom'] = sa[0]
+        mate['pos'] = int(sa[1]) - 1
+        mate['is_reverse'] = sa[2] == '-'
+        #mate['cigar'] = cigarstring_to_tuple(sa[3])
+        mate['mapping_quality'] = int(sa[4])
+        mates.append(mate)
+    
+    if split_left:
+        for mate in mates:
+            if mate['pos'] >= right_pos - split_slop and mate['pos'] <= right_pos + split_slop:
+                return True
+
+    if split_right:
+        for mate in mates:
+            if mate['pos'] >= left_pos - split_slop and mate['pos'] <= left_pos + split_slop:
+                return True
+
+    return False
+
+def clipped_by_breakpoint (read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
+    """
+
+    """
+    
 
 def is_splitter (read):
     """
@@ -69,15 +126,24 @@ def enters_ref_region (read, pos, split_slop):
     return read.reference_end > reference_region
 
 def begins_before_breakpoint (read, pos):
+    """
+
+    """
     return read.reference_start < pos
 
 def replace_none (field):
+    """
+
+    """
     if field == None:
         return '.'
     else:
         return field
 
 def replace_empty (_list):
+    """
+
+    """
     if len(_list) == 0:
         return '.'
     else:
@@ -87,6 +153,7 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
     """
     Genotype the variants specified in the VCF file using data from the BAM file.
     """
+    #pdb.set_trace()
     header = ''
     with open(input_vcf_str, 'r') as f:
         for line in f:
@@ -116,8 +183,7 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         left_conf_int = variant.info['CIPOS']
         right_conf_int = variant.info['CIEND']
 
-        fetch_flank = 20
-        split_slop = 150
+        fetch_flank = 200
 
         # Get range from which to get BAM reads
         chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
@@ -157,13 +223,49 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                 reads[read.query_name] = []
                 reads[read.query_name].append(read)
 
-        min_aligned = 50
+        min_aligned = 200
         min_pct_aligned = 0.80
+        split_slop = 150
+        total_count = 0
         ref_count = 0
+        alt_count = 0
         for read_list in reads.values():
             for read in read_list:
-                if is_ref_support (read, chrom, left_pos, left_conf_int, min_aligned, min_pct_aligned):
-                    ref_count += 1
+                total_count += 1
+                if spans_breakpoint(read, chrom, left_pos, left_conf_int, min_aligned, min_pct_aligned):
+                    ref_count += .5
+                if spans_breakpoint(read, chrom, right_pos, right_conf_int, min_aligned, min_pct_aligned):
+                    ref_count += .5
+                if split_by_breakpoint(read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
+                    alt_count += 1
+
+        if total_count > 0:
+            prob_ref = float(ref_count) / float(total_count)
+            prob_alt = float(alt_count) / float(total_count)
+        else:
+            prob_ref = 0
+            prob_alt = 1
+
+        prob_hom_ref = prob_ref * (1 - prob_alt) * 0.01
+        prob_hom_alt = prob_alt * (1 - prob_ref)
+        if prob_hom_alt >= prob_hom_ref:
+            genotype = '1/1'
+        else:
+            genotype = '0/0'
+        #prob_het = ((prob_hom_ref + prob_hom_alt) / 2)
+        #if prob_hom_alt >= prob_het and prob_hom_alt >= prob_hom_ref:
+        #    genotype = '1/1'
+        #elif prob_het >= prob_hom_alt and prob_het >= prob_hom_ref:
+            #genotype = '0/1'
+        #else:
+        #    genotype = '0/0'
+
+        #if prob_ref > 0.50:
+        #    genotype = '0/0'
+        #elif prob_ref > 0.25:
+        #    genotype = '0/1'
+        #else:
+        #    genotype = '1/1'
 
         #left_ref_count = 0
         #left_alt_count = 0
@@ -195,8 +297,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         output_variant.filter = replace_empty(variant.filter)
         for k in variant.info.keys():
             output_variant.info[k] = variant.info[k]
-        output_variant.format['GT'] = genotype
-        output_variant.format['DP'] = total_count
 
         if output_vcf_str is not None:
             with open(output_vcf_str, 'a') as f:
@@ -233,6 +333,7 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                     f.write(str(output_variant.format[k]) + ':')
                 f.write(str(output_variant.format[k]) + '\n')
         else:
+            #pdb.set_trace()
             print(output_variant.chrom, end='\t')
             print(str(output_variant.pos), end='\t')
             print(output_variant.id, end='\t')
@@ -241,32 +342,34 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             print(output_variant.qual, end='\t')
             print(output_variant.filter, end='\t')
             for k, v in output_variant.info.items():
-                if isinstance(v, int) or isinstance(v, str):
+                if k == 'IMPRECISE':
+                    print(k, end=';')
+                elif isinstance(v, int) or isinstance(v, str):
                     print('{}={}'.format(k, v), end=';')
-                elif v:
-                    print(v, end=';')
                 else:
                     print(k, end='=')
                     for i in range(len(v) - 1):
                         print(str(v[i]), end=',')
                     print(str(v[len(v)-1]), end=';')
             print('', end='\t')
-            temp_keys = output_variant.format.keys()
-            num_keys = len(temp_keys)
-            temp_count = 0
-            for k in temp_keys:
-                if temp_count >= num_keys - 1:
-                    break
-                temp_count += 1
-                print(k, end=':')
-            print(k, end='\t')
-            temp_count = 0
-            for k in temp_keys:
-                if temp_count >= num_keys - 1:
-                    break
-                temp_count += 1
-                print(output_variant.format[k], end=':')
-            print(output_variant.format[k], end='\n')
+            print('GT', end='\t')
+            print(genotype)
+            #temp_keys = output_variant.format.keys()
+            #num_keys = len(temp_keys)
+            #temp_count = 0
+            #for k in temp_keys:
+            #    if temp_count >= num_keys - 1:
+            #        break
+            #    temp_count += 1
+            #    print(k, end=':')
+            #print(k, end='\t')
+            #temp_count = 0
+            #for k in temp_keys:
+            #    if temp_count >= num_keys - 1:
+            #        break
+            #    temp_count += 1
+            #    print(output_variant.format[k], end=':')
+            #print(output_variant.format[k], end='\n')
 
 
 if __name__ == '__main__':
