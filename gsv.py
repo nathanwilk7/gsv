@@ -37,7 +37,7 @@ def get_parsed_args ():
     return parser.parse_args()
 
 # TODO: check chromosome length to make sure query bounds don't go too far if necessary, test it to find out...
-def get_query_bounds (svtype, position, conf_int, fetch_flank):
+def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     """
     Returns the bounds to query the BAM file around the given position/confidence 
     interval for the specified svtype and fetch_flank.
@@ -47,7 +47,13 @@ def get_query_bounds (svtype, position, conf_int, fetch_flank):
     (70, 121)
     """
     # if svtype == util.SVTYPE_DEL:
-    return max(position + conf_int[0] - fetch_flank, 0), position + conf_int[1] + fetch_flank + 1
+    return max(position + conf_int[0] - fetch_flank, 0), min(position + conf_int[1] + fetch_flank + 1, chrom_length)
+
+def is_ref_support (read, chrom, pos, conf_int, min_aligned, min_pct_aligned):
+    """
+
+    """
+    return read.get_overlap(max(0, pos - min_aligned), pos + min_aligned) >= 2 * min_aligned * min_pct_aligned
 
 def is_splitter (read):
     """
@@ -104,46 +110,80 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
     for variant in input_vcf.fetch():
         chrom = variant.chrom
         svtype = variant.info['SVTYPE']
-        pos = variant.pos
+        left_pos = variant.pos
+        right_pos = variant.info['END']
         # TODO: Use the 95% conf int instead to limit the size of this thing?
-        conf_int = variant.info['CIPOS']
-        end_pos = variant.info['END']
+        left_conf_int = variant.info['CIPOS']
+        right_conf_int = variant.info['CIEND']
+
         fetch_flank = 20
         split_slop = 150
-        
 
         # Get range from which to get BAM reads
-        lower_bound, upper_bound = get_query_bounds(svtype, pos, conf_int, fetch_flank)
+        chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
+        left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, fetch_flank, chrom_length)
+        right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, fetch_flank, chrom_length)
 
         # Get the reads
         # TODO: What does it mean when 2 reads have the same query_name?
         reads = {}
-        for read in input_bam.fetch(chrom, lower_bound, upper_bound):
+        left_reads = {}
+        for read in input_bam.fetch(chrom, left_lower_bound, left_upper_bound):
+            if read.is_unmapped or read.is_duplicate:
+                continue
+            if read.query_name in left_reads:
+                left_reads[read.query_name].append(read)
+            else:
+                left_reads[read.query_name] = []
+                left_reads[read.query_name].append(read)
             if read.query_name in reads:
                 reads[read.query_name].append(read)
             else:
                 reads[read.query_name] = []
                 reads[read.query_name].append(read)
 
+        right_reads = {}
+        for read in input_bam.fetch(chrom, right_lower_bound, right_upper_bound):
+            if read.is_unmapped or read.is_duplicate:
+                continue
+            if read.query_name in right_reads:
+                right_reads[read.query_name].append(read)
+            else:
+                right_reads[read.query_name] = []
+                right_reads[read.query_name].append(read)
+            if read.query_name in reads:
+                reads[read.query_name].append(read)
+            else:
+                reads[read.query_name] = []
+                reads[read.query_name].append(read)
+
+        min_aligned = 50
+        min_pct_aligned = 0.80
         ref_count = 0
-        alt_count = 0
         for read_list in reads.values():
             for read in read_list:
-                if enters_ref_region(read, pos, split_slop) and begins_before_breakpoint(read, pos):
+                if is_ref_support (read, chrom, left_pos, left_conf_int, min_aligned, min_pct_aligned):
                     ref_count += 1
-                else:
-                    alt_count += 1
-        
-        total_count = ref_count + alt_count
-        pct_ref = float(ref_count) / total_count
-        pct_alt = float(alt_count) / total_count
 
-        if pct_ref > .75:
-            genotype = '0/0'
-        elif pct_ref > .25:
-            genotype = '0/1'
-        else:
-            genotype = '1/1'
+        #left_ref_count = 0
+        #left_alt_count = 0
+        #for read_list in left_reads.values():
+        #    for read in read_list:
+        #        if enters_ref_region(read, left_pos, split_slop) and begins_before_breakpoint(read, left_pos):
+        #            left_ref_count += 1
+        #        else:
+        #            left_alt_count += 1
+        
+        #left_total_read_count = left_ref_count + left_alt_count
+        #left_pct_ref = float(left_ref_count) / left_total_count
+        #left_pct_alt = float(left_alt_count) / left_total_count
+
+        #if left_pct_ref > .75:
+        #    genotype = '0/0'
+        #elif left_pct_ref > .25:
+        #    genotype = '0/1'
+        #else:
+        #    genotype = '1/1'
 
         output_variant = Variant()
         output_variant.chrom = variant.chrom
@@ -203,6 +243,8 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             for k, v in output_variant.info.items():
                 if isinstance(v, int) or isinstance(v, str):
                     print('{}={}'.format(k, v), end=';')
+                elif v:
+                    print(v, end=';')
                 else:
                     print(k, end='=')
                     for i in range(len(v) - 1):
