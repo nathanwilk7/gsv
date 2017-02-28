@@ -1,15 +1,30 @@
 """
-TODO: OOP this whole thing? (Util, Variant, Bam, Vcf), defining some kind of interface would make plugging objects in easy
-TODO: One off errors...I am certain they're everywhere
-TODO: How to test funcs that depend on 
+TODO: How to test funcs that depend on stuff, test directory with sample stuff?
+TODO: VCF output pretty print and file match up and take care of fields with values like True (IMPRECISE)
 """
 
 import pdb # TODO: debug
 
 import pysam, argparse
-import utility as util
-import custom_svtyper as csvtyper
 
+class Variant:
+    """
+
+    """
+    def __init__ (self):
+        """
+
+        """
+        self.chrom = None
+        self.pos = None
+        self.id = None
+        self.ref = None
+        self.alt = None
+        self.qual = None
+        self.filter = None
+        self.info = {}
+        self.format = {}
+        
 def get_parsed_args ():
     """
     Sets up the commmand line parser and returns the parsed arguments.
@@ -18,134 +33,210 @@ def get_parsed_args ():
     parser.add_argument('-t', '--test', action='store_true', help='Run test cases')
     parser.add_argument('-b', '--input_bam', help='Path to input BAM file')
     parser.add_argument('-v', '--input_vcf', help='Path to input VCF file')
-    parser.add_argument('--fetch_flank', type=int, default=util.FETCH_FLANK, help='How far around confidence interval to pull reads from BAM')
+    parser.add_argument('-o', '--output_vcf', help='Path to output VCF file')
     return parser.parse_args()
 
-# TODO: check chromosome length to make sure query bounds don't go too far
+# TODO: check chromosome length to make sure query bounds don't go too far if necessary, test it to find out...
 def get_query_bounds (svtype, position, conf_int, fetch_flank):
     """
     Returns the bounds to query the BAM file around the given position/confidence 
     interval for the specified svtype and fetch_flank.
-    >>> get_query_bounds(util.SVTYPE_DEL, 10, (-4, 10), 1)
+    >>> get_query_bounds('DEL', 10, (-4, 10), 1)
     (5, 22)
-    >>> get_query_bounds(util.SVTYPE_DEL, 100, (-10, 0), 20)
+    >>> get_query_bounds('DEL', 100, (-10, 0), 20)
     (70, 121)
     """
     # if svtype == util.SVTYPE_DEL:
     return max(position + conf_int[0] - fetch_flank, 0), position + conf_int[1] + fetch_flank + 1
 
-def read_depth_at_pos (bam, chrom_id, pos):
+def is_splitter (read):
     """
-    Counts the depth of the reads in the bam that where aligned at the given 
-    position in the chromosome.
-    """
-    return sum(1 for _ in bam.fetch(chrom_id, pos, pos+1))
 
-def fraction_bases_aligned_in_range (read, start_pos, end_pos):
     """
-    Finds the fraction of bases that are aligned to the reference between 
-    the start and end positions.
-    """
-    return read.get_overlap(start_pos, end_pos) / float(end_pos - start_pos)
+    return read.has_tag('SA')
 
-def genotype_read_depth (start_read_depth, mid_read_depth, end_read_depth):
+def enters_ref_region (read, pos, split_slop):
     """
-    Return a genotype string based on the given read depths.
+
     """
-    avg_end_read_depth = (start_read_depth + end_read_depth) / 2
-    if mid_read_depth <= avg_end_read_depth * util.MAX_FRAC_HOM_ALT_READ_DEPTH:
-        return util.HOM_ALT
-    elif mid_read_depth <= avg_end_read_depth * util.MAX_FRAC_HET_READ_DEPTH:
-        return util.HET
+    reference_region = pos + split_slop
+    return read.reference_end > reference_region
+
+def begins_before_breakpoint (read, pos):
+    return read.reference_start < pos
+
+def replace_none (field):
+    if field == None:
+        return '.'
     else:
-        return util.HOM_REF
+        return field
 
-def genotype_splitters (splitter_count, reference_read_count):
-    """
-    Return a genotype string based on the number of splitters and reference reads.
-    """
-    # TODO: Think about fixing this division by zero for real...
-    if splitter_count == 0 and reference_read_count == 0:
-        return util.HOM_ALT
-    frac_splitters = splitter_count / (splitter_count + reference_read_count)
-    if frac_splitters <= util.MAX_FRAC_HOM_REF_SPLITTERS:
-        return util.HOM_REF
-    elif frac_splitters <= util.MAX_FRAC_HET_SPLITTERS:
-        return util.HET
+def replace_empty (_list):
+    if len(_list) == 0:
+        return '.'
     else:
-        return util.HOM_ALT
+        return _list
 
-def genotype_variants (input_vcf_str, input_bam_str, fetch_flank):
+def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
     """
     Genotype the variants specified in the VCF file using data from the BAM file.
     """
+    header = ''
+    with open(input_vcf_str, 'r') as f:
+        for line in f:
+            if line[:2] == '##':
+                header += line
+            else:
+                break
+    header += '#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	NA12878\n'
+    
+    if output_vcf_str is not None:
+        with open(output_vcf_str, 'w') as f:
+            f.write(header)
+    else:
+        print(header, end='')
+
     input_vcf = pysam.VariantFile(input_vcf_str)
+    # TODO: multiple input bams/samples
+    input_bam = pysam.AlignmentFile(input_bam_str, 'rb')
 
     # Loop over all variants to get svtype, pos, conf_int from VCF file
-    # natee = 0
     for variant in input_vcf.fetch():
-        # if not natee < 15:
-            # break
-        # natee += 1
-        # Set up the input BAM file
-        # TODO: multiple input bams
-        input_bam = pysam.AlignmentFile(input_bam_str, 'rb')
-
-        # Get variant info
-        chrom_id = variant.chrom
-        svtype = variant.info[util.VCF_SVTYPE]
+        chrom = variant.chrom
+        svtype = variant.info['SVTYPE']
         pos = variant.pos
-        conf_int = variant.info[util.VCF_CIPOS]
-        end_pos = variant.info[util.VCF_END]
-
-        # We can use read depth if it's a deletion
-        if svtype == util.SVTYPE_DEL:
-            # Check read depth at start, end, and in the middle of the deletion
-            start_read_depth = read_depth_at_pos(input_bam, chrom_id, pos)
-            mid_read_depth = read_depth_at_pos(input_bam, chrom_id, (pos + end_pos) // 2)
-            end_read_depth = read_depth_at_pos(input_bam, chrom_id, end_pos)
+        # TODO: Use the 95% conf int instead to limit the size of this thing?
+        conf_int = variant.info['CIPOS']
+        end_pos = variant.info['END']
+        fetch_flank = 20
+        split_slop = 150
+        
 
         # Get range from which to get BAM reads
         lower_bound, upper_bound = get_query_bounds(svtype, pos, conf_int, fetch_flank)
 
-        # Count vars for splitters vs reference
-        splitter_count = 0
-        reference_count = 0
+        # Get the reads
+        # TODO: What does it mean when 2 reads have the same query_name?
+        reads = {}
+        for read in input_bam.fetch(chrom, lower_bound, upper_bound):
+            if read.query_name in reads:
+                reads[read.query_name].append(read)
+            else:
+                reads[read.query_name] = []
+                reads[read.query_name].append(read)
 
-        # Loop through reads around SV site and classify them
-        for read in input_bam.fetch(chrom_id, lower_bound, upper_bound):
-            if svtype == util.SVTYPE_DEL:
-                frac_aligned = fraction_bases_aligned_in_range(read, pos, end_pos)
-                if frac_aligned < util.MIN_FRAC_ALIGN_REF:
-                    splitter_count += 1
+        ref_count = 0
+        alt_count = 0
+        for read_list in reads.values():
+            for read in read_list:
+                if enters_ref_region(read, pos, split_slop) and begins_before_breakpoint(read, pos):
+                    ref_count += 1
                 else:
-                    reference_count += 1
+                    alt_count += 1
+        
+        total_count = ref_count + alt_count
+        pct_ref = float(ref_count) / total_count
+        pct_alt = float(alt_count) / total_count
 
+        if pct_ref > .75:
+            genotype = '0/0'
+        elif pct_ref > .25:
+            genotype = '0/1'
+        else:
+            genotype = '1/1'
 
-        read_depth_genotype = genotype_read_depth(start_read_depth, mid_read_depth, end_read_depth)
-        splitter_genotype = genotype_splitters(splitter_count, reference_count)
+        output_variant = Variant()
+        output_variant.chrom = variant.chrom
+        output_variant.pos = variant.pos
+        output_variant.id = variant.id
+        output_variant.ref = variant.ref
+        output_variant.alt = variant.alts[0]
+        output_variant.qual = replace_none(variant.qual)
+        output_variant.filter = replace_empty(variant.filter)
+        for k in variant.info.keys():
+            output_variant.info[k] = variant.info[k]
+        output_variant.format['GT'] = genotype
+        output_variant.format['DP'] = total_count
 
-        print("SVPOS: {}".format(pos))
-        #print("Start Read Depth: {}".format(start_read_depth))
-        #print("Mid Read Depth: {}".format(mid_read_depth))
-        #print("End Read Depth: {}".format(end_read_depth))
-        #print("Splitter Count: {}".format(splitter_count))
-        #print("Reference Count: {}".format(reference_count))
-        #print("GENOTYPE")
-        print("Read Depth Genotype: {}".format(read_depth_genotype))
-        print("Splitter Genotype: {}\n".format(splitter_genotype))
+        if output_vcf_str is not None:
+            with open(output_vcf_str, 'a') as f:
+                f.write(output_variant.chrom + '\t')
+                f.write(str(output_variant.pos) + '\t')
+                f.write(output_variant.id + '\t')
+                f.write(output_variant.ref + '\t')
+                f.write(output_variant.alt + '\t')
+                f.write(output_variant.qual + '\t')
+                f.write(output_variant.filter + '\t')
+                for k, v in output_variant.info.items():
+                    if isinstance(v, int) or isinstance(v, str):
+                        f.write('{}={}'.format(k, v) + ';')
+                    else:
+                        f.write(k + '=')
+                        for i in range(len(v) - 1):
+                            f.write(str(v[i]) + ',')
+                        f.write(str(v[len(v)-1]) + ';')
+                f.write('\t')
+                temp_keys = output_variant.format.keys()
+                num_keys = len(temp_keys)
+                temp_count = 0
+                for k in temp_keys:
+                    if temp_count >= num_keys - 1:
+                        break
+                    temp_count += 1
+                    f.write(k + ':')
+                f.write(k + '\t')
+                temp_count = 0
+                for k in temp_keys:
+                    if temp_count >= num_keys - 1:
+                        break
+                    temp_count += 1
+                    f.write(str(output_variant.format[k]) + ':')
+                f.write(str(output_variant.format[k]) + '\n')
+        else:
+            print(output_variant.chrom, end='\t')
+            print(str(output_variant.pos), end='\t')
+            print(output_variant.id, end='\t')
+            print(output_variant.ref, end='\t')
+            print(output_variant.alt, end='\t')
+            print(output_variant.qual, end='\t')
+            print(output_variant.filter, end='\t')
+            for k, v in output_variant.info.items():
+                if isinstance(v, int) or isinstance(v, str):
+                    print('{}={}'.format(k, v), end=';')
+                else:
+                    print(k, end='=')
+                    for i in range(len(v) - 1):
+                        print(str(v[i]), end=',')
+                    print(str(v[len(v)-1]), end=';')
+            print('', end='\t')
+            temp_keys = output_variant.format.keys()
+            num_keys = len(temp_keys)
+            temp_count = 0
+            for k in temp_keys:
+                if temp_count >= num_keys - 1:
+                    break
+                temp_count += 1
+                print(k, end=':')
+            print(k, end='\t')
+            temp_count = 0
+            for k in temp_keys:
+                if temp_count >= num_keys - 1:
+                    break
+                temp_count += 1
+                print(output_variant.format[k], end=':')
+            print(output_variant.format[k], end='\n')
+
 
 if __name__ == '__main__':
-    # pdb.set_trace() # TODO: debug
-    # Get the command line parser
+    """
+
+    """
     args = get_parsed_args()
     if args.test:
         import doctest
         doctest.testmod()
     else:
-        # Get args
         input_vcf_str = args.input_vcf
         input_bam_str = args.input_bam
-        fetch_flank = args.fetch_flank
-
-        genotype_variants(input_vcf_str, input_bam_str, fetch_flank)
+        output_vcf_str = args.output_vcf
+        genotype_variants(input_vcf_str, input_bam_str, output_vcf_str)
