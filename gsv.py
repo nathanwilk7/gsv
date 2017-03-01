@@ -67,6 +67,7 @@ def spans_breakpoint (read, chrom, pos, conf_int, min_aligned, min_pct_aligned):
     """
 
     """
+    #pdb.set_trace()
     return read.get_overlap(max(0, pos - min_aligned), pos + min_aligned) >= 2 * min_aligned * min_pct_aligned
 
 # TODO: Consider conf_int
@@ -74,6 +75,7 @@ def split_by_breakpoint (read, chrom, left_pos, left_conf_int, right_pos, right_
     """
 
     """
+    #pdb.set_trace()
     if not read.has_tag('SA'):
         return False
     
@@ -233,25 +235,40 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             for read in read_list:
                 total_count += 1
                 if spans_breakpoint(read, chrom, left_pos, left_conf_int, min_aligned, min_pct_aligned):
-                    ref_count += .5
+                    ref_count += 0.5
                 if spans_breakpoint(read, chrom, right_pos, right_conf_int, min_aligned, min_pct_aligned):
-                    ref_count += .5
+                    ref_count += 0.5
                 if split_by_breakpoint(read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
-                    alt_count += 1
+                    alt_count += 0.5
 
         if total_count > 0:
-            prob_ref = float(ref_count) / float(total_count)
-            prob_alt = float(alt_count) / float(total_count)
+            prior_ref = .15
+            prior_alt = 1
+            pct_ref = (float(ref_count) / float(total_count)) * prior_ref
+            pct_alt = (float(alt_count) / float(total_count)) * prior_alt
+            abs_diff = abs(pct_ref - pct_alt)
+            #pdb.set_trace()
+            if abs_diff < 0.05:
+                genotype = '0/1'
+            elif pct_alt > pct_ref:
+                genotype = '1/1'
+            else:
+                genotype = '0/0'
         else:
-            prob_ref = 0
-            prob_alt = 1
-
-        prob_hom_ref = prob_ref * (1 - prob_alt) * 0.01
-        prob_hom_alt = prob_alt * (1 - prob_ref)
-        if prob_hom_alt >= prob_hom_ref:
             genotype = '1/1'
-        else:
-            genotype = '0/0'
+        #if total_count > 0:
+        #    prob_ref = float(ref_count) / float(total_count)
+        #    prob_alt = float(alt_count) / float(total_count)
+        #else:
+        #    prob_ref = 0
+        #    prob_alt = 1
+
+        #prob_hom_ref = prob_ref * (1 - prob_alt) * 0.01
+        #prob_hom_alt = prob_alt * (1 - prob_ref)
+        #if prob_hom_alt >= prob_hom_ref:
+        #    genotype = '1/1'
+        #else:
+        #    genotype = '0/0'
         #prob_het = ((prob_hom_ref + prob_hom_alt) / 2)
         #if prob_hom_alt >= prob_het and prob_hom_alt >= prob_hom_ref:
         #    genotype = '1/1'
