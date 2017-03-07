@@ -1,6 +1,6 @@
 """
 TODO: How to test funcs that depend on stuff, test directory with sample stuff?
-TODO: VCF output pretty print and file match up and take care of fields with values like True (IMPRECISE)
+TODO: VCF output print for real and file match up and take care of fields with values like True (IMPRECISE)
 """
 
 import pdb # TODO: debug
@@ -62,76 +62,81 @@ def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     # if svtype == util.SVTYPE_DEL:
     return max(position + conf_int[0] - fetch_flank, 0), min(position + conf_int[1] + fetch_flank + 1, chrom_length)
 
+def get_section_bounds (svtype, pos_left, conf_int_left, chrom_length_left, pos_right, conf_int_right, chrom_length_right, fetch_flank, min_aligned):
+    query_bounds_left = max(pos_left + conf_int_left[0] - fetch_flank, 0), min(pos_left + conf_int_left[1] + fetch_flank + 1, chrom_length_left)
+    query_bounds_right = max(pos_right + conf_int_right[0] - fetch_flank, 0), min(pos_right + conf_int_right[1] + fetch_flank + 1, chrom_length_right)
+
+    reference_bounds_left = max(0, pos_left - min_aligned), pos_left + min_aligned
+    reference_bounds_right = max(0, pos_right - min_aligned), pos_right + min_aligned
+
+    splitter_bounds_left = pos_left - split_slop, pos_left + split_slop
+    splitter_bounds_right = pos_right - split_slop, pos_right + split_slop
+
+    return query_bounds_left, query_bounds_right, reference_bounds_left, reference_bounds_right, splitter_bounds_left, splitter_bounds_right
+
 # TODO: Consider conf_int
-def spans_breakpoint (read, chrom, pos, conf_int, min_aligned, min_pct_aligned):
+def spans_breakpoint (read, pos, min_aligned, min_pct_aligned):
     """
 
     """
-    #pdb.set_trace()
-    return read.get_overlap(max(0, pos - min_aligned), pos + min_aligned) >= 2 * min_aligned * min_pct_aligned
+    lower_bound, upper_bound = max(0, pos - min_aligned), pos + min_aligned
+    return read.get_overlap(lower_bound, upper_bound) >= 2 * min_aligned * min_pct_aligned
 
 # TODO: Consider conf_int
-def split_by_breakpoint (read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
+def split_by_breakpoint (read_list, left_pos, right_pos, split_slop):
     """
 
     """
-    #pdb.set_trace()
-    if not read.has_tag('SA'):
-        return False
-    
-    split_left = read.reference_end >= left_pos - split_slop and read.reference_end <= left_pos + split_slop
-    split_right = read.reference_start >= right_pos - split_slop and read.reference_start <= right_pos + split_slop
-    if not split_left and not split_right:
-        return False
-    
-    split_alignment_list = read.get_tag('SA').rstrip(';').split(';')
-    mates = []
-    for split_alignment in split_alignment_list:
-        sa = split_alignment.split(',')
-        mate = {}
-        mate['chrom'] = sa[0]
-        mate['pos'] = int(sa[1]) - 1
-        mate['is_reverse'] = sa[2] == '-'
-        #mate['cigar'] = cigarstring_to_tuple(sa[3])
-        mate['mapping_quality'] = int(sa[4])
-        mates.append(mate)
-    
-    if split_left:
-        for mate in mates:
-            if mate['pos'] >= right_pos - split_slop and mate['pos'] <= right_pos + split_slop:
-                return True
+    for read in read_list:
+        split_left = read.reference_end >= left_pos - split_slop and read.reference_end <= left_pos + split_slop
+        split_right = read.reference_start >= right_pos - split_slop and read.reference_start <= right_pos + split_slop
+        if split_left or split_right:
+            for read2 in read_list:
+                if read == read2:
+                    continue
+                if split_left:
+                    if read2.reference_start >= right_pos - split_slop and read2.reference_start<= right_pos + split_slop:
+                        return True
 
-    if split_right:
-        for mate in mates:
-            if mate['pos'] >= left_pos - split_slop and mate['pos'] <= left_pos + split_slop:
-                return True
-
+                if split_right:
+                    if read2.reference_end>= left_pos - split_slop and read2.reference_start<= left_pos + split_slop:
+                        return True
     return False
+"""
+        if read.has_tag('SA'):
+            split_left = read.reference_end >= left_pos - split_slop and read.reference_end <= left_pos + split_slop
+            split_right = read.reference_start >= right_pos - split_slop and read.reference_start <= right_pos + split_slop
+            if split_left or split_right:
+                split_alignment_list = read.get_tag('SA').rstrip(';').split(';')
+                mates = []
+                for split_alignment in split_alignment_list:
+                    sa = split_alignment.split(',')
+                    mate = {}
+                    mate['chrom'] = sa[0]
+                    mate['pos'] = int(sa[1]) - 1
+                    mate['is_reverse'] = sa[2] == '-'
+                    #mate['cigar'] = cigarstring_to_tuple(sa[3])
+                    mate['mapping_quality'] = int(sa[4])
+                    mates.append(mate)
+
+                if split_left:
+                    for mate in mates:
+                        if mate['pos'] >= right_pos - split_slop and mate['pos'] <= right_pos + split_slop:
+                            return True
+
+                if split_right:
+                    for mate in mates:
+                        if mate['pos'] >= left_pos - split_slop and mate['pos'] <= left_pos + split_slop:
+                            return True
+
+    return False # If none of the reads in the list were valid splitters
+"""
 
 def clipped_by_breakpoint (read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
     """
 
     """
-    
-
-def is_splitter (read):
-    """
-
-    """
-    return read.has_tag('SA')
-
-def enters_ref_region (read, pos, split_slop):
-    """
-
-    """
-    reference_region = pos + split_slop
-    return read.reference_end > reference_region
-
-def begins_before_breakpoint (read, pos):
-    """
-
-    """
-    return read.reference_start < pos
+    a = 10
 
 def replace_none (field):
     """
@@ -155,7 +160,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
     """
     Genotype the variants specified in the VCF file using data from the BAM file.
     """
-    #pdb.set_trace()
     header = ''
     with open(input_vcf_str, 'r') as f:
         for line in f:
@@ -184,17 +188,28 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         # TODO: Use the 95% conf int instead to limit the size of this thing?
         left_conf_int = variant.info['CIPOS']
         right_conf_int = variant.info['CIEND']
+        # TODO: left and right on different chromosomes?
+        chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
 
         fetch_flank = 200
+        min_aligned = 200
+        min_pct_aligned = 0.80
+        split_slop = 150
 
-        # Get range from which to get BAM reads
-        chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
+        #left_query_bounds, right_query_bounds, left_reference_bounds, right_reference_bounds, left_splitter_bounds, right_splitter_bounds = get_section_bounds (svtype, left_pos, left_conf_int, chrom_length, right_pos, right_conf_int, chrom_length, fetch_flank, min_aligned)
+        #left_lower_bound, left_upper_bound = left_query_bounds
+        #right_lower_bound, right_upper_bound = right_query_bounds
+        #left_lower_ref, left_upper_ref = left_reference_bounds
+        #right_lower_ref, right_upper_ref = right_reference_bounds
+        #left_lower_split, left_upper_split = left_splittler_bounds
+        #right_lower_split, right_upper_split = right_splittler_bounds
+
         left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, fetch_flank, chrom_length)
         right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, fetch_flank, chrom_length)
 
         # Get the reads
-        # TODO: What does it mean when 2 reads have the same query_name?
-        reads = {}
+        # TODO: What does it mean when 2 reads have the same query_name? Split alignment
+
         left_reads = {}
         for read in input_bam.fetch(chrom, left_lower_bound, left_upper_bound):
             if read.is_unmapped or read.is_duplicate:
@@ -204,11 +219,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             else:
                 left_reads[read.query_name] = []
                 left_reads[read.query_name].append(read)
-            if read.query_name in reads:
-                reads[read.query_name].append(read)
-            else:
-                reads[read.query_name] = []
-                reads[read.query_name].append(read)
 
         right_reads = {}
         for read in input_bam.fetch(chrom, right_lower_bound, right_upper_bound):
@@ -219,90 +229,61 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             else:
                 right_reads[read.query_name] = []
                 right_reads[read.query_name].append(read)
-            if read.query_name in reads:
-                reads[read.query_name].append(read)
-            else:
-                reads[read.query_name] = []
-                reads[read.query_name].append(read)
 
-        min_aligned = 200
-        min_pct_aligned = 0.80
-        split_slop = 150
-        total_count = 0
+        reads = {}
+        for read_list in left_reads.values():
+            for read in read_list:
+                if read.query_name in reads:
+                    do_add = True
+                    for read2 in reads[read.query_name]:
+                        if read == read2:
+                            do_add = False
+                    if do_add:
+                        reads[read.query_name].append(read)
+                else:
+                    reads[read.query_name] = []
+                    reads[read.query_name].append(read)
+        for read_list in right_reads.values():
+            for read in read_list:
+                if read.query_name in reads:
+                    do_add = True
+                    for read2 in reads[read.query_name]:
+                        if read == read2:
+                            do_add = False
+                    if do_add:
+                        reads[read.query_name].append(read)
+                else:
+                    reads[read.query_name] = []
+                    reads[read.query_name].append(read)
+
         ref_count = 0
         alt_count = 0
+        #if left_pos == 2566176:
+        #    pdb.set_trace()
         for read_list in reads.values():
             for read in read_list:
-                total_count += 1
-                if spans_breakpoint(read, chrom, left_pos, left_conf_int, min_aligned, min_pct_aligned):
+                if spans_breakpoint(read, left_pos, min_aligned, min_pct_aligned):
                     ref_count += 0.5
-                if spans_breakpoint(read, chrom, right_pos, right_conf_int, min_aligned, min_pct_aligned):
+                if spans_breakpoint(read, right_pos, min_aligned, min_pct_aligned):
                     ref_count += 0.5
-                if split_by_breakpoint(read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
-                    alt_count += 0.5
+        for read_list in reads.values():
+            if split_by_breakpoint(read_list, left_pos, right_pos, split_slop):
+                alt_count += 1
 
+        total_count = alt_count + ref_count
         if total_count > 0:
-            prior_ref = .15
-            prior_alt = 1
-            pct_ref = (float(ref_count) / float(total_count)) * prior_ref
-            pct_alt = (float(alt_count) / float(total_count)) * prior_alt
-            abs_diff = abs(pct_ref - pct_alt)
-            #pdb.set_trace()
-            if abs_diff < 0.05:
+            min_pct_het = 0.15
+            is_het = False
+            if ref_count > total_count * min_pct_het and alt_count > total_count * min_pct_het:
+                is_het = True
+            if is_het:
                 genotype = '0/1'
-            elif pct_alt > pct_ref:
+            elif alt_count > ref_count:
                 genotype = '1/1'
             else:
                 genotype = '0/0'
         else:
-            genotype = '1/1'
-        #if total_count > 0:
-        #    prob_ref = float(ref_count) / float(total_count)
-        #    prob_alt = float(alt_count) / float(total_count)
-        #else:
-        #    prob_ref = 0
-        #    prob_alt = 1
-
-        #prob_hom_ref = prob_ref * (1 - prob_alt) * 0.01
-        #prob_hom_alt = prob_alt * (1 - prob_ref)
-        #if prob_hom_alt >= prob_hom_ref:
-        #    genotype = '1/1'
-        #else:
-        #    genotype = '0/0'
-        #prob_het = ((prob_hom_ref + prob_hom_alt) / 2)
-        #if prob_hom_alt >= prob_het and prob_hom_alt >= prob_hom_ref:
-        #    genotype = '1/1'
-        #elif prob_het >= prob_hom_alt and prob_het >= prob_hom_ref:
-            #genotype = '0/1'
-        #else:
-        #    genotype = '0/0'
-
-        #if prob_ref > 0.50:
-        #    genotype = '0/0'
-        #elif prob_ref > 0.25:
-        #    genotype = '0/1'
-        #else:
-        #    genotype = '1/1'
-
-        #left_ref_count = 0
-        #left_alt_count = 0
-        #for read_list in left_reads.values():
-        #    for read in read_list:
-        #        if enters_ref_region(read, left_pos, split_slop) and begins_before_breakpoint(read, left_pos):
-        #            left_ref_count += 1
-        #        else:
-        #            left_alt_count += 1
-        
-        #left_total_read_count = left_ref_count + left_alt_count
-        #left_pct_ref = float(left_ref_count) / left_total_count
-        #left_pct_alt = float(left_alt_count) / left_total_count
-
-        #if left_pct_ref > .75:
-        #    genotype = '0/0'
-        #elif left_pct_ref > .25:
-        #    genotype = '0/1'
-        #else:
-        #    genotype = '1/1'
+            genotype = '0/0'
 
         output_variant = Variant()
         output_variant.chrom = variant.chrom
@@ -350,7 +331,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                     f.write(str(output_variant.format[k]) + ':')
                 f.write(str(output_variant.format[k]) + '\n')
         else:
-            #pdb.set_trace()
             print(output_variant.chrom, end='\t')
             print(str(output_variant.pos), end='\t')
             print(output_variant.id, end='\t')
@@ -388,6 +368,25 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             #    print(output_variant.format[k], end=':')
             #print(output_variant.format[k], end='\n')
 
+
+def is_splitter (read):
+    """
+
+    """
+    return read.has_tag('SA')
+
+def enters_ref_region (read, pos, split_slop):
+    """
+
+    """
+    reference_region = pos + split_slop
+    return read.reference_end > reference_region
+
+def begins_before_breakpoint (read, pos):
+    """
+
+    """
+    return read.reference_start < pos
 
 if __name__ == '__main__':
     """
