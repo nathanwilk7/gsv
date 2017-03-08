@@ -38,7 +38,7 @@ def get_parsed_args ():
     return parser.parse_args()
 
 # adapted from Matt Shirley (http://coderscrowd.com/app/public/codes/view/171)
-def cigarstring_to_tuple(cigarstring):
+def cigarstring_to_tuple (cigarstring):
     """
 
     """
@@ -132,11 +132,119 @@ def split_by_breakpoint (read_list, left_pos, right_pos, split_slop):
     return False # If none of the reads in the list were valid splitters
 """
 
-def clipped_by_breakpoint (read, chrom, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
+def clipped_by_breakpoint (read, left_pos, right_pos, split_slop):
     """
 
     """
-    a = 10
+    right_side_clipped = read.reference_end >= left_pos - split_slop and read.reference_end <= left_pos + split_slop
+    left_side_clipped = read.reference_start >= right_pos - split_slop and read.reference_start <= right_pos + split_slop
+    if right_side_clipped:
+        cigar = read.cigartuples
+        if cigar[-1][0] == 4 or cigar[-1][0] == 5:
+            right_clip_size = cigar[-1][1]
+            if read.reference_end + right_clip_size >= left_pos + split_slop:
+                return True
+
+    if left_side_clipped:
+        cigar = read.cigartuples
+        if cigar[0][0] == 4 or cigar[0][0] == 5:
+            left_clip_size = cigar[0][1]
+            if read.reference_start - left_clip_size <= right_pos - split_slop:
+                return True
+
+    return False
+
+def get_coverage_diff_skip (read, left_pos, right_pos, chrom_length, read_depth_skip, read_depth_interval):
+    """
+
+    """
+    # TODO: conf_int might extend too far into SV, could be better to have read_depth_interval parameter around pos
+    left_outside_outer = max(left_pos - read_depth_skip - read_depth_interval, 0)
+    left_outside_inner = max(left_pos - read_depth_skip, 0)
+    left_inside_inner = min(left_pos + read_depth_skip + 1, chrom_length)
+    left_inside_outer = min(left_pos + read_depth_skip + read_depth_interval + 1, chrom_length)
+    left_outside_overlap = read.get_overlap(left_outside_outer, left_outside_inner)
+    left_inside_overlap = read.get_overlap(left_inside_inner, left_inside_outer)
+
+    right_inside_inner = max(right_pos - read_depth_skip - read_depth_interval, 0)
+    right_inside_outer = max(right_pos - read_depth_skip, 0)
+    right_outside_inner = min(right_pos + read_depth_skip + 1, chrom_length)
+    right_outside_outer = min(right_pos + read_depth_skip + read_depth_interval + 1, chrom_length)
+    right_inside_overlap = read.get_overlap(right_inside_outer, right_inside_inner)
+    right_outside_overlap = read.get_overlap(right_outside_inner, right_outside_outer)
+    
+    outside_overlap = left_outside_overlap + right_outside_overlap
+    inside_overlap = left_inside_overlap + right_inside_overlap
+
+    if outside_overlap <= 0:
+        return 1.0
+    return float(inside_overlap) / float(outside_overlap)
+
+def get_coverage_diff (read, left_pos, right_pos, chrom_length, read_depth_interval):
+    """
+
+    """
+    left_outside = max(left_pos - read_depth_interval, 0)
+    left_inside = min(left_pos + read_depth_interval, chrom_length)
+    left_outside_overlap = read.get_overlap(left_outside, left_pos)
+    left_inside_overlap = read.get_overlap(left_pos, left_inside)
+
+    right_inside = max(right_pos - read_depth_interval, 0)
+    right_outside = min(right_pos + read_depth_interval, chrom_length)
+    right_inside_overlap = read.get_overlap(right_inside, right_pos)
+    right_outside_overlap = read.get_overlap(right_pos, right_outside)
+    
+    outside_overlap = left_outside_overlap + right_outside_overlap
+    inside_overlap = left_inside_overlap + right_inside_overlap
+
+    if outside_overlap <= 0:
+        return 1.0
+    return float(inside_overlap) / float(outside_overlap) 
+
+def get_coverage_diff_conf_int (read, left_pos, left_conf_int, right_pos, right_conf_int, chrom_length, fetch_flank):
+    """
+
+    """
+    # TODO: conf_int might extend too far into SV, could be better to have read_depth_interval parameter around pos
+    left_outside_outer = max(left_pos + left_conf_int[0] - fetch_flank, 0)
+    left_outside_inner = max(left_pos + left_conf_int[0], 0)
+    left_inside_inner = min(left_pos + left_conf_int[1] + 1, chrom_length)
+    left_inside_outer = min(left_pos + left_conf_int[1] + fetch_flank + 1, chrom_length)
+    left_outside_overlap = read.get_overlap(left_outside_outer, left_outside_inner)
+    left_inside_overlap = read.get_overlap(left_inside_inner, left_inside_outer)
+
+    right_inside_inner = max(right_pos + right_conf_int[0] - fetch_flank, 0)
+    right_inside_outer = max(right_pos + right_conf_int[0], 0)
+    right_outside_inner = min(right_pos + right_conf_int[1] + 1, chrom_length)
+    right_outside_outer = min(right_pos + right_conf_int[1] + fetch_flank + 1, chrom_length)
+    right_inside_overlap = read.get_overlap(right_inside_outer, right_inside_inner)
+    right_outside_overlap = read.get_overlap(right_outside_inner, right_outside_outer)
+    
+    outside_overlap = left_outside_overlap + right_outside_overlap
+    inside_overlap = left_inside_overlap + right_inside_overlap
+
+    if outside_overlap <= 0:
+        return 1.0
+    return float(inside_overlap) / float(outside_overlap)
+
+def is_mismatched_over_sv (read, left_pos, right_pos, split_slop, mismatched_pct):
+    """
+
+    """
+    from_left = read.reference_end >= left_pos + split_slop 
+    from_right = read.reference_start <= right_pos - split_slop
+    if not from_left and not from_right:
+        return False
+    if from_left:
+        length_over_sv = read.reference_end - (left_pos + split_slop)
+        length_of_sv = (right_pos - split_slop) - (left_pos + split_slop)
+        min_length = max(min(length_over_sv, length_of_sv), 0)
+        #if min_length == 0:
+        #    return False
+        matches = read.get_overlap(left_pos + split_slop, left_pos + split_slop + min_length)
+        mismatches = min_length - matches
+        if mismatches / min_length > mismatched_pct:
+            
 
 def replace_none (field):
     """
@@ -194,8 +302,11 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         fetch_flank = 200
         min_aligned = 200
         min_pct_aligned = 0.80
-        split_slop = 150
+        split_slop = 250 # 150 gets worse genotypes correct
+        read_depth_skip = 50
+        read_depth_interval = 50
 
+        # Added this per Brent's request but I'll need to do some more refactoring to make it work well, also as long as I'm prototyping it is a pain to maintain...
         #left_query_bounds, right_query_bounds, left_reference_bounds, right_reference_bounds, left_splitter_bounds, right_splitter_bounds = get_section_bounds (svtype, left_pos, left_conf_int, chrom_length, right_pos, right_conf_int, chrom_length, fetch_flank, min_aligned)
         #left_lower_bound, left_upper_bound = left_query_bounds
         #right_lower_bound, right_upper_bound = right_query_bounds
@@ -206,9 +317,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
 
         left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, fetch_flank, chrom_length)
         right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, fetch_flank, chrom_length)
-
-        # Get the reads
-        # TODO: What does it mean when 2 reads have the same query_name? Split alignment
 
         left_reads = {}
         for read in input_bam.fetch(chrom, left_lower_bound, left_upper_bound):
@@ -256,34 +364,50 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                     reads[read.query_name] = []
                     reads[read.query_name].append(read)
 
-        ref_count = 0
-        alt_count = 0
-        #if left_pos == 2566176:
-        #    pdb.set_trace()
+        ref_support = 0
+        alt_support = 0
+        # Instead of ifs, get probabilities of support 
         for read_list in reads.values():
             for read in read_list:
+                #read_count += 1
                 if spans_breakpoint(read, left_pos, min_aligned, min_pct_aligned):
-                    ref_count += 0.5
+                    ref_support += 0.5
                 if spans_breakpoint(read, right_pos, min_aligned, min_pct_aligned):
-                    ref_count += 0.5
+                    ref_support += 0.5
+                if clipped_by_breakpoint(read, left_pos, right_pos, split_slop):
+                    alt_support += 0.01
+                # TODO: This currently isn't helping us do better but probably has the potential to do so
+                #coverage_diff = get_coverage_diff_skip(read, left_pos, right_pos, chrom_length, read_depth_skip, read_depth_interval)
+                #coverage_diff = get_coverage_diff(read, left_pos, right_pos, chrom_length, read_depth_interval)
+                #if coverage_diff >= 0.8:
+                #    ref_support += min(coverage_diff - 1, 2)
+                #elif coverage_diff < 0.1:
+                #    alt_support += (1 - coverage_diff) * 0.20
+        #if read_count > 0:
+        #    coverage_support = float(coverage_diff) / float(read_count)
+        #    if coverage_support > 1.5:
+        #        ref_support += read_count * 0.1
+        #    elif coverage_support < 0.5:
+        #        alt_support += read_count * 0.1
+
         for read_list in reads.values():
             if split_by_breakpoint(read_list, left_pos, right_pos, split_slop):
-                alt_count += 1
+                alt_support += 1
 
-        total_count = alt_count + ref_count
-        if total_count > 0:
+        total_support = alt_support + ref_support
+        if total_support > 0:
             min_pct_het = 0.15
             is_het = False
-            if ref_count > total_count * min_pct_het and alt_count > total_count * min_pct_het:
+            if ref_support > total_support * min_pct_het and alt_support > total_support * min_pct_het:
                 is_het = True
             if is_het:
                 genotype = '0/1'
-            elif alt_count > ref_count:
+            elif alt_support > ref_support:
                 genotype = '1/1'
             else:
                 genotype = '0/0'
         else:
-            genotype = '0/0'
+            genotype = '1/1'
 
         output_variant = Variant()
         output_variant.chrom = variant.chrom
