@@ -3,8 +3,8 @@ TODO: How to test funcs that depend on stuff, test directory with sample stuff?
 TODO: VCF output print for real and file match up and take care of fields with values like True (IMPRECISE)
 """
 
+from __future__ import print_function
 import pdb # TODO: debug
-
 import pysam, argparse, re
 
 class Variant:
@@ -227,24 +227,37 @@ def get_coverage_diff_conf_int (read, left_pos, left_conf_int, right_pos, right_
         return 1.0
     return float(inside_overlap) / float(outside_overlap)
 
-def is_mismatched_over_sv (read, left_pos, right_pos, split_slop, mismatched_pct):
+def is_mismatched_over_sv (read, left_pos, right_pos, mismatch_slop, mismatch_pct):
     """
 
     """
-    from_left = read.reference_end >= left_pos + split_slop 
-    from_right = read.reference_start <= right_pos - split_slop
-    if not from_left and not from_right:
+    enters_sv_from_left = read.reference_start <= left_pos + mismatch_slop
+    enters_sv_from_right = read.reference_start >= left_pos + mismatch_slop
+    if not enters_sv_from_left and not enters_sv_from_right:
         return False
-    if from_left:
-        length_over_sv = read.reference_end - (left_pos + split_slop)
-        length_of_sv = (right_pos - split_slop) - (left_pos + split_slop)
+    if enters_sv_from_left:
+        length_over_sv = read.reference_end - (left_pos + mismatch_slop)
+        length_of_sv = (right_pos - mismatch_slop) - (left_pos + mismatch_slop)
         min_length = max(min(length_over_sv, length_of_sv), 0)
-        #if min_length == 0:
-        #    return False
-        matches = read.get_overlap(left_pos + split_slop, left_pos + split_slop + min_length)
+        if min_length == 0:
+            return False
+        matches = read.get_overlap(left_pos + mismatch_slop, left_pos + mismatch_slop + min_length)
         mismatches = min_length - matches
-        if mismatches / min_length > mismatched_pct:
+        if mismatches / min_length > mismatch_pct:
+            return True
+    
+    if enters_sv_from_right:
+        length_over_sv = (right_pos - mismatch_slop) - read.reference_start
+        length_of_sv = (right_pos - mismatch_slop) - (left_pos + mismatch_slop)
+        min_length = max(min(length_over_sv, length_of_sv), 0)
+        if min_length == 0:
+            return False
+        matches = read.get_overlap(right_pos - mismatch_slop - min_length, right_pos - mismatch_slop)
+        mismatches = min_length - matches
+        if mismatches / min_length > mismatch_pct:
+            return True
             
+    return False
 
 def replace_none (field):
     """
@@ -305,6 +318,8 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         split_slop = 250 # 150 gets worse genotypes correct
         read_depth_skip = 50
         read_depth_interval = 50
+        mismatch_slop = 50
+        mismatch_pct = 0.40
 
         # Added this per Brent's request but I'll need to do some more refactoring to make it work well, also as long as I'm prototyping it is a pain to maintain...
         #left_query_bounds, right_query_bounds, left_reference_bounds, right_reference_bounds, left_splitter_bounds, right_splitter_bounds = get_section_bounds (svtype, left_pos, left_conf_int, chrom_length, right_pos, right_conf_int, chrom_length, fetch_flank, min_aligned)
@@ -376,6 +391,8 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                     ref_support += 0.5
                 if clipped_by_breakpoint(read, left_pos, right_pos, split_slop):
                     alt_support += 0.01
+                if is_mismatched_over_sv(read, left_pos, right_pos, mismatch_slop, mismatch_pct):
+                    alt_support += 1
                 # TODO: This currently isn't helping us do better but probably has the potential to do so
                 #coverage_diff = get_coverage_diff_skip(read, left_pos, right_pos, chrom_length, read_depth_skip, read_depth_interval)
                 #coverage_diff = get_coverage_diff(read, left_pos, right_pos, chrom_length, read_depth_interval)
