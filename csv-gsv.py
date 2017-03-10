@@ -294,13 +294,15 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         with open(output_vcf_str, 'w') as f:
             f.write(header)
     else:
-        print(header, end='')
+        pass
+        #print(header, end='')
 
     input_vcf = pysam.VariantFile(input_vcf_str)
     # TODO: multiple input bams/samples
     input_bam = pysam.AlignmentFile(input_bam_str, 'rb')
 
     # Loop over all variants to get svtype, pos, conf_int from VCF file
+    print('spans_left_break,spans_right_breakpoint,clipped,mismatched,ref_coverage,alt_coverage,splittlers')
     for variant in input_vcf.fetch():
         chrom = variant.chrom
         svtype = variant.info['SVTYPE']
@@ -386,25 +388,38 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         #if left_pos == 68008000:
         #    pdb.set_trace()
 
-        # TODO: Instead of ifs, get probabilities of support 
+        # TODO: Instead of ifs, get probabilities of support
+        spans_left_breakpoint = 0
+        spans_right_breakpoint = 0
+        clipped = 0
+        mismatched = 0
+        ref_coverage = 0
+        alt_coverage = 0
+        splitters = 0
         for read_list in reads.values():
             for read in read_list:
                 #read_count += 1
                 if spans_breakpoint(read, left_pos, min_aligned, min_pct_aligned):
-                    ref_support += 0.5
+                    spans_left_breakpoint += 1
+                    #ref_support += 0.5
                 if spans_breakpoint(read, right_pos, min_aligned, min_pct_aligned):
-                    ref_support += 0.5
+                    spans_right_breakpoint += 1
+                    #ref_support += 0.5
                 if clipped_by_breakpoint(read, left_pos, right_pos, split_slop, extra_clip_slop):
-                    alt_support += 0
+                    clipped += 1
+                    #alt_support += 0
                 if is_mismatched_over_sv(read, left_pos, right_pos, mismatch_slop, mismatch_pct):
-                    alt_support += 0
+                    mismatched += 1
+                    #alt_support += 0
 
                 #coverage_diff = get_coverage_diff_skip(read, left_pos, right_pos, chrom_length, read_depth_skip, read_depth_interval)
                 coverage_diff = get_coverage_diff(read, left_pos, right_pos, chrom_length, read_depth_interval)
                 if coverage_diff >= 0.8:
-                    ref_support += 0 # min(coverage_diff - 1, 2)
+                    ref_coverage += 1
+                    #ref_support += 0 # min(coverage_diff - 1, 2)
                 elif coverage_diff < 0.1:
-                    alt_support += 0 # (1 - coverage_diff) * 0.20
+                    alt_coverage += 1
+                    #alt_support += 0 # (1 - coverage_diff) * 0.20
         #if read_count > 0:
         #    coverage_support = float(coverage_diff) / float(read_count)
         #    if coverage_support > 1.5:
@@ -414,8 +429,11 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
 
         for read_list in reads.values():
             if split_by_breakpoint(read_list, left_pos, right_pos, split_slop):
-                alt_support += 1
-
+                splitters += 1
+                #alt_support += 1
+        print('{},{},{},{},{},{},{}'.format(spans_left_breakpoint, spans_right_breakpoint, clipped, mismatched, ref_coverage, alt_coverage, splitters))
+        
+"""
         total_support = alt_support + ref_support
         if total_support > 0:
             min_pct_het = 0.15
@@ -513,7 +531,7 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             #    temp_count += 1
             #    print(output_variant.format[k], end=':')
             #print(output_variant.format[k], end='\n')
-
+"""
 
 def is_splitter (read):
     """
