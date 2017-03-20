@@ -76,6 +76,7 @@ def fetch_one_loci_reads (input_bam, chrom, lower_bound, upper_bound):
     """
     Get the reads from the bam that are on the specified chromosome and 
      within the specified bounds.
+    >>> 
     """
     reads = {}
     for read in input_bam.fetch(chrom, lower_bound, upper_bound):
