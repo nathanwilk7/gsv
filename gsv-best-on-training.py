@@ -554,7 +554,7 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                 # If a read is classified as a splitter, then we don't want to give support to the reference for it
                 for read in read_list:
                     if read in reads_span_breakpoint:
-                        ref_support -= 0.5 # ignoring this does best on training set, 0.5 fives alt_het calls, but adds more het_alt calls
+                        ref_support -= 0.0 # ignoring this does best on training set, 0.5 fives alt_het calls, but adds more het_alt calls
 
         # Genotype based on support for alternate and reference
         genotype = get_genotype(alt_support, ref_support, MIN_PCT_HET)
