@@ -16,7 +16,7 @@ print('Chrom,Left_Pos,ID,SV_Type,Called_Genotype,Spans_Left_Breakpoint,Spans_Rig
 
 #pdb.set_trace()
 natee = 0
-with open('full-to-plot-2.csv', 'r') as f:
+with open('gsv-csv-results-unprocessed.csv', 'r') as f:
     for line in f:
         if natee == 0:
             natee += 1

@@ -536,7 +536,8 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
     """
     # Read header from input VCF and write it to the output VCF
     header = read_header(input_vcf_str)
-    write_output_vcf_header(output_vcf_str, header)
+    #write_output_vcf_header(output_vcf_str, header)
+    print('Chrom,Left_Pos,ID,SV_Type,Genotype,Spans_Left_Breakpoint,Spans_Right_Breakpoint,Clipped_By_Breakpoint,Mismatched_Over_SV,Coverage_Diff,Splitters,Reference_Splitters,Ref_Avg_Base_Coverage,Alt_Avg_Base_Coverage')
 
     # Set up the input VCF and input BAM
     input_vcf2 = pysam.VariantFile(input_vcf_str)
@@ -590,7 +591,9 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         ref_bases_covered_right_actual = 0
         ref_left_read_count = 0
         ref_right_read_count = 0
-        
+
+        Spans_Left_Breakpoint,Spans_Right_Breakpoint,Clipped_By_Breakpoint,Mismatched_Over_SV,Coverage_Diff,Splitters = 0,0,0,0,0,0
+        Reference_Splitters,Ref_Avg_Base_Coverage,Alt_Avg_Base_Coverage = 0,0,0
         
         # TODO: Instead of ifs, get probabilities of support 
         # Extract support from individual reads
@@ -599,20 +602,25 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                 if spans_breakpoint(read, left_pos, MIN_ALIGNED, MIN_PCT_ALIGNED):
                     ref_support += 0.5
                     reads_span_breakpoint.add(read)
+                    Spans_Left_Breakpoint+=1
 
                 if spans_breakpoint(read, right_pos, MIN_ALIGNED, MIN_PCT_ALIGNED):
                     ref_support += 0.5
                     reads_span_breakpoint.add(read)
+                    Spans_Right_Breakpoint+=1
 
                 if clipped_by_breakpoint(read, left_pos, right_pos, SPLIT_SLOP, EXTRA_CLIP_SLOP):
                     alt_support += 0
+                    Clipped_By_Breakpoint+=1
 
                 #if is_mismatched_over_sv(read, left_pos, right_pos, MISMATCH_SLOP, MISMATCH_PCT):
                 if is_mismatched_over_sv_ver2(read, left_pos, right_pos, MISMATCH_PCT):
                     alt_support += 1
+                    Mismatched_Over_SV+=1
 
                 #coverage_diff = get_coverage_diff_skip(read, left_pos, right_pos, chrom_length, READ_DEPTH_SKIP, READ_DEPTH_INTERVAL)
                 coverage_diff = get_coverage_diff(read, left_pos, right_pos, chrom_length, READ_DEPTH_INTERVAL)
+                Coverage_Diff+=coverage_diff
                 if coverage_diff >= 0.8:
                     ref_support += 0 # min(coverage_diff - 1, 2)
                 elif coverage_diff < 0.1:
@@ -632,11 +640,13 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         for read_list in reads.values():
             if split_by_breakpoint(read_list, left_pos, right_pos, SPLIT_SLOP):
                 alt_support += 1
+                Splitters+=1
                 
                 # If a read is classified as a splitter, then we don't want to give support to the reference for it
                 for read in read_list:
                     if read in reads_span_breakpoint:
                         ref_support -= 0.0 # ignoring this does best on training set, 0.5 fives alt_het calls, but adds more het_alt calls
+                        Reference_Splitters+=1
 
         inner_reads = fetch_inner_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
                                         right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
@@ -675,8 +685,15 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             alt_coverage_pct = 0
             alt_avg_base_coverage = 0
 
+        Ref_Avg_Base_Coverage = ref_avg_base_coverage
+        Alt_Avg_Base_Coverage = alt_avg_base_coverage
+
         # Genotype based on support for alternate and reference
         genotype = get_genotype(alt_support, ref_support, MIN_PCT_HET)
+
+        print('{},{},{},{},{},{},{},{},{},{},{},{},{},{}'.format(chrom, left_pos, variant2.id, svtype, genotype, Spans_Left_Breakpoint, Spans_Right_Breakpoint, 
+                                                                 Clipped_By_Breakpoint, Mismatched_Over_SV, Coverage_Diff, Splitters, Reference_Splitters, 
+                                                                 Ref_Avg_Base_Coverage, Alt_Avg_Base_Coverage))
 
         # Set up output variant info
         output_variant = Variant()
@@ -702,7 +719,7 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
             output_variant.info[k] = variant2.info[k]
 
         # Write this variant and its genotype
-        write_variant(output_vcf_str, output_variant, genotype)
+        #write_variant(output_vcf_str, output_variant, genotype)
 
 if __name__ == '__main__':
     """

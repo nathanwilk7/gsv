@@ -8,7 +8,6 @@ TODO: Make this python2 and python3 compatible
 #from __future__ import print_function # TODO: Python2
 import pdb # TODO: debug
 import pysam, argparse, re
-import cyvcf2
 
 # Constants and adjustable parameters
 # TODO: Make these easy to adjust via command line arguments
@@ -22,27 +21,8 @@ READ_DEPTH_INTERVAL = 50 # 50 good
 MISMATCH_SLOP = 100 # 100 good, 300 good
 MISMATCH_PCT = 0.90
 EXTRA_CLIP_SLOP = 1000
-INNER_READ_FETCH_FLANK = 20
 
 MIN_PCT_HET = 0.15 # .15 normally
-
-# Test Classes for Mock Data
-
-class TestRead:
-    def __init__ (self, query_name, is_unmapped=False, is_duplicate=False):
-        self.query_name = query_name
-        self.is_unmapped = is_unmapped
-        self.is_duplicate = is_duplicate
-
-class TestInputBam:
-    def __init__ (self, read_names):
-        self.reads = []
-        for read_name in read_names:
-            self.reads.append(TestRead(read_name))
-        
-    def fetch (self, chrom, lower_bound, upper_bound):
-        return self.reads
-
 
 def get_parsed_args ():
     """
@@ -85,9 +65,9 @@ def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     Returns the bounds to query the BAM file around the given position/confidence 
      interval for the specified svtype and fetch_flank. Basically gets all the reads
      that are +/- the confidence interval and fetch flank around the position.
-    >>> get_query_bounds('DEL', 10, (-4, 10), 1, 25)
+    >>> get_query_bounds('DEL', 10, (-4, 10), 1)
     (5, 22)
-    >>> get_query_bounds('DEL', 100, (-10, 0), 20, 150)
+    >>> get_query_bounds('DEL', 100, (-10, 0), 20)
     (70, 121)
     """
     return max(position + conf_int[0] - fetch_flank, 0), min(position + conf_int[1] + fetch_flank + 1, chrom_length)
@@ -96,13 +76,7 @@ def fetch_one_loci_reads (input_bam, chrom, lower_bound, upper_bound):
     """
     Get the reads from the bam that are on the specified chromosome and 
      within the specified bounds.
-    >>> read_names = ['natee1', 'natee2', 'natee1']
-    >>> test_input_bam = TestInputBam(read_names)
-    >>> fetched_reads = fetch_one_loci_reads(test_input_bam, '1', 0, 1)
-    >>> len(fetched_reads['natee1'])
-    2
-    >>> len(fetched_reads['natee2'])
-    1
+    >>> 
     """
     reads = {}
     for read in input_bam.fetch(chrom, lower_bound, upper_bound):
@@ -154,27 +128,6 @@ def fetch_reads (input_bam, svtype, chrom, left_pos, left_conf_int, right_pos, r
     reads = {}
     reads = combine_reads(reads, left_reads, right_reads)
     return reads
-
-def get_inner_query_bounds (svtype, left_pos, left_conf_int, right_pos, right_conf_int, inner_read_fetch_flank):
-    chrom_length = right_pos + 1
-    left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, inner_read_fetch_flank, chrom_length)
-    right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, inner_read_fetch_flank, chrom_length)
-    
-    # If they cross over, just return the middle
-    if left_upper_bound > right_lower_bound:
-        middle = int((left_upper_bound + right_lower_bound) / 2)
-        return middle, middle + 1
-    
-    return left_upper_bound, right_lower_bound
-
-def fetch_inner_reads (input_bam, svtype, chrom, left_pos, left_conf_int, right_pos, right_conf_int, inner_read_fetch_flank):
-    """
-    Fetches all the reads from the bam between the left and right sides
-    """
-    # Chromosome length shouldn't matter since we're looking in between two breakpoints, so just set it something irrelevant
-    left_upper_bound, right_lower_bound = get_inner_query_bounds(svtype, left_pos, left_conf_int, right_pos, right_conf_int, inner_read_fetch_flank)
-    inner_reads = fetch_one_loci_reads(input_bam, chrom, left_upper_bound, right_lower_bound)
-    return inner_reads
 
 # TODO: Consider conf_int
 def spans_breakpoint (read, pos, min_aligned, min_pct_aligned):
@@ -539,43 +492,27 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
     write_output_vcf_header(output_vcf_str, header)
 
     # Set up the input VCF and input BAM
-    input_vcf2 = pysam.VariantFile(input_vcf_str)
-    #input_vcf = cyvcf2.VCF(input_vcf_str)
-
+    input_vcf = pysam.VariantFile(input_vcf_str)
     # TODO: multiple input bams/samples
     input_bam = pysam.AlignmentFile(input_bam_str, 'rb')
 
     # Loop over all variants in input VCF file
-    for variant2 in input_vcf2.fetch():
-    #for variant in input_vcf:
-        # Get variant info into local vars so this can be swapped out with different libraries
-        chrom = variant2.chrom
-        svtype = variant2.info['SVTYPE']
-        left_pos = variant2.pos
-        right_pos = variant2.info['END']
+    for variant in input_vcf.fetch():
+        # Abstraction layer for variant info
+        chrom = variant.chrom
+        svtype = variant.info['SVTYPE']
+        left_pos = variant.pos
+        right_pos = variant.info['END']
         # TODO: Use the 95% conf int instead to limit the size of this thing?
-        left_conf_int = variant2.info['CIPOS']
-        right_conf_int = variant2.info['CIEND']
+        left_conf_int = variant.info['CIPOS']
+        right_conf_int = variant.info['CIEND']
         # TODO: left and right on different chromosomes?
         chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
-
-        # TODO: Use the 95% conf int instead to limit the size of this thing?
-        # TODO: left and right on different chromosomes?
-        #chrom = variant.CHROM
-        #svtype = variant.INFO.get('SVTYPE')
-        #left_pos = variant.start
-        #right_pos = variant.end # variant.INFO.get('END')
-        #left_conf_int = variant.INFO.get('CIPOS')
-        #right_conf_int = variant.INFO.get('CIEND')
-        #chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
-        
 
         # Get the reads around the variant on both sides
         reads = fetch_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
                             right_pos, right_conf_int, FETCH_FLANK, chrom_length)
-        left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, FETCH_FLANK, chrom_length)
-        right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, FETCH_FLANK, chrom_length)
-
+        
         # These numbers are used to genotype
         ref_support = 0
         alt_support = 0
@@ -583,15 +520,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         # Save reads that span breakpoint
         reads_span_breakpoint = set()
 
-        # Uses coverage and aligned bases to find coverage depth
-        ref_bases_covered_left_possible = left_upper_bound - left_lower_bound
-        ref_bases_covered_right_possible = right_upper_bound - right_lower_bound
-        ref_bases_covered_left_actual = 0
-        ref_bases_covered_right_actual = 0
-        ref_left_read_count = 0
-        ref_right_read_count = 0
-        
-        
         # TODO: Instead of ifs, get probabilities of support 
         # Extract support from individual reads
         for read_list in reads.values():
@@ -618,16 +546,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                 elif coverage_diff < 0.1:
                     alt_support += 0 # (1 - coverage_diff) * 0.20
 
-                read_ref_bases_covered_left_actual = read.get_overlap(left_lower_bound, left_upper_bound)
-                if read_ref_bases_covered_left_actual > 0:
-                    ref_left_read_count += 1
-                    ref_bases_covered_left_actual += read_ref_bases_covered_left_actual
-
-                read_ref_bases_covered_right_actual = read.get_overlap(right_lower_bound, right_upper_bound)
-                if read_ref_bases_covered_right_actual > 0:
-                    ref_right_read_count += 1
-                    ref_bases_covered_right_actual += read_ref_bases_covered_right_actual
-
         # If there are splitters that have pieces near both breakpoints, they're in the same read_list
         for read_list in reads.values():
             if split_by_breakpoint(read_list, left_pos, right_pos, SPLIT_SLOP):
@@ -638,68 +556,20 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                     if read in reads_span_breakpoint:
                         ref_support -= 0.0 # ignoring this does best on training set, 0.5 fives alt_het calls, but adds more het_alt calls
 
-        inner_reads = fetch_inner_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
-                                        right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
-        inner_lower_bound, inner_upper_bound = get_inner_query_bounds(svtype, left_pos, left_conf_int, 
-                                                                      right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
-
-        alt_bases_covered_possible = inner_upper_bound - inner_lower_bound
-        alt_bases_covered_actual = 0
-        alt_read_count = 0
-
-        for read_list in inner_reads.values():
-            for read in read_list:
-                alt_bases_covered_actual += read.get_overlap(inner_lower_bound, inner_upper_bound)
-                alt_read_count += 1
-
-        ref_read_count = (ref_left_read_count + ref_right_read_count) / 2
-                
-        if ref_bases_covered_left_possible > 0 and ref_left_read_count > 0:
-            ref_left_coverage_pct = ref_bases_covered_left_actual / (ref_bases_covered_left_possible * ref_left_read_count)
-            ref_left_avg_base_coverage = ref_bases_covered_left_actual / ref_bases_covered_left_possible
-        else:
-            ref_left_coverage_pct = 0
-            ref_left_avg_base_coverage = 0
-        if ref_bases_covered_right_possible > 0 and ref_right_read_count > 0:
-            ref_right_coverage_pct = ref_bases_covered_right_actual / (ref_bases_covered_right_possible * ref_right_read_count)
-            ref_right_avg_base_coverage = ref_bases_covered_right_actual / ref_bases_covered_right_possible
-        else:
-            ref_right_coverage_pct = 0
-            ref_right_avg_base_coverage = 0
-        ref_avg_base_coverage = (ref_left_avg_base_coverage + ref_right_avg_base_coverage) / 2
-
-        if alt_bases_covered_possible > 0 and alt_read_count > 0:
-            alt_coverage_pct = alt_bases_covered_actual / (alt_bases_covered_possible * alt_read_count)
-            alt_avg_base_coverage = alt_bases_covered_actual / alt_bases_covered_possible
-        else:
-            alt_coverage_pct = 0
-            alt_avg_base_coverage = 0
-
         # Genotype based on support for alternate and reference
         genotype = get_genotype(alt_support, ref_support, MIN_PCT_HET)
 
         # Set up output variant info
         output_variant = Variant()
-        #output_variant.chrom = variant.CHROM
-        #output_variant.pos = variant.start
-        #output_variant.id = variant.ID
-        #output_variant.ref = variant.REF
-        #output_variant.alt = variant.ALT[0]
-        #output_variant.qual = replace_none(variant.QUAL)
-        #output_variant.filter = replace_empty([variant.FILTER])
-        #output_variant.info = {}
-        #for k in variant2.INFO.keys():
-        #    output_variant.info[k] = variant.INFO[k]
-
-        output_variant.chrom = variant2.chrom
-        output_variant.pos = variant2.pos
-        output_variant.id = variant2.id
-        output_variant.ref = variant2.ref
-        output_variant.alt = variant2.alts[0]
-        output_variant.qual = replace_none(variant2.qual)
-        output_variant.filter = replace_empty(variant2.filter)
-        for k in variant2.info.keys():
-            output_variant.info[k] = variant2.info[k]
+        output_variant.chrom = variant.chrom
+        output_variant.pos = variant.pos
+        output_variant.id = variant.id
+        output_variant.ref = variant.ref
+        output_variant.alt = variant.alts[0]
+        output_variant.qual = replace_none(variant.qual)
+        output_variant.filter = replace_empty(variant.filter)
+        for k in variant.info.keys():
+            output_variant.info[k] = variant.info[k]
 
         # Write this variant and its genotype
         write_variant(output_vcf_str, output_variant, genotype)
@@ -719,11 +589,10 @@ if __name__ == '__main__':
         output_vcf_str = args.output_vcf
         genotype_variants(input_vcf_str, input_bam_str, output_vcf_str)
 
-
 ### MISC ###
 
 """
-# I to do some more refactoring to make this work well
+# Added this per Brent's request but I'll need to do some more refactoring to make it work well, also as long as I'm prototyping it is a pain to maintain...
 def get_section_bounds (svtype, pos_left, conf_int_left, chrom_length_left, pos_right, conf_int_right, chrom_length_right, fetch_flank, min_aligned):
     query_bounds_left = max(pos_left + conf_int_left[0] - fetch_flank, 0), min(pos_left + conf_int_left[1] + fetch_flank + 1, chrom_length_left)
     query_bounds_right = max(pos_right + conf_int_right[0] - fetch_flank, 0), min(pos_right + conf_int_right[1] + fetch_flank + 1, chrom_length_right)
