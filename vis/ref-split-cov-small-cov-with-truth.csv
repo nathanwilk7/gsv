@@ -1,4 +1,4 @@
-SV_Type,Called_Genotype,Spans_Left_Breakpoint,Spans_Right_Breakpoint,Clipped_By_Breakpoint,Mismatched_Over_SV,Coverage_Diff,Splitters,Reference_Splitters,Truth_Genotype
+Chrom,Left_Pos,ID,SV_Type,Called_Genotype,Spans_Left_Breakpoint,Spans_Right_Breakpoint,Clipped_By_Breakpoint,Mismatched_Over_SV,Coverage_Diff,Splitters,Reference_Splitters,Ref_Avg_Base_Coverage,Alt_Avg_Base_Coverage,Truth_Genotype
 1,869423,1,DEL,1/1,0.0,0.0,45.0,0.0,54.48260877441372,25.0,0.0,11.997980564834497,0.1111111111111111,1/1
 1,2566176,7,DEL,0/1,11.0,12.0,11.0,0.0,27.520898413583975,6.0,0.0,12.600337880912917,10.0,0/1
 1,2911549,10,DEL,0/1,14.0,12.0,22.0,0.0,16.499121856226655,13.0,0.0,19.475,13.786206896551723,0/1

@@ -48,7 +48,7 @@ def print_as_csv(mylist, mystr):
         print(el, end=',')
     print(mystr)
 
-print('SV_Type,Called_Genotype,Spans_Left_Breakpoint,Spans_Right_Breakpoint,Clipped_By_Breakpoint,Mismatched_Over_SV,Coverage_Diff,Splitters,Reference_Splitters,Truth_Genotype')
+print('Chrom,Left_Pos,ID,SV_Type,Called_Genotype,Spans_Left_Breakpoint,Spans_Right_Breakpoint,Clipped_By_Breakpoint,Mismatched_Over_SV,Coverage_Diff,Splitters,Reference_Splitters,Ref_Avg_Base_Coverage,Alt_Avg_Base_Coverage,Truth_Genotype')
 
 for i in range(200):
     if i in dups:
