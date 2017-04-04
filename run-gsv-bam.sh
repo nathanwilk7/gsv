@@ -1,1 +1,0 @@
-python gsv.py -b /scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/nanopore-NA12878/nanopore-NA12878.params.merged.bam -v /scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/1-26-sv-analysis/lumpy.new.refined.vcf > test.txt

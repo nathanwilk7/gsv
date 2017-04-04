@@ -1,8 +1,0 @@
-NEW
-/scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/nanopore-NA12878/nanopore-NA12878.params.merged.bam
-/scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/1-26-sv-analysis/lumpy.new.refined.vcf
-
-OLD
-/scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/ont-random-bams/merge1/39.random.bam
-/scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/lumpy_validated_sv.NA12878.nochr.vcf
-

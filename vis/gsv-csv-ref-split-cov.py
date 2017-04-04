@@ -574,8 +574,8 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         # Get the reads around the variant on both sides
         reads = fetch_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
                             right_pos, right_conf_int, FETCH_FLANK, chrom_length)
-        left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, FETCH_FLANK, chrom_length)
-        right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, FETCH_FLANK, chrom_length)
+        left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, 0, chrom_length)
+        right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, 0, chrom_length)
 
         # These numbers are used to genotype
         ref_support = 0
@@ -649,9 +649,9 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                         Reference_Splitters+=1
 
         inner_reads = fetch_inner_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
-                                        right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
+                                        right_pos, right_conf_int, 0)
         inner_lower_bound, inner_upper_bound = get_inner_query_bounds(svtype, left_pos, left_conf_int, 
-                                                                      right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
+                                                                      right_pos, right_conf_int, 0)
 
         alt_bases_covered_possible = inner_upper_bound - inner_lower_bound
         alt_bases_covered_actual = 0

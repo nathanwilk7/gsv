@@ -7,7 +7,7 @@ with open('../results/truth-gts.txt', 'r') as f:
 
 predicted_gts = []
 natee = -1
-with open('ref-split-cov-no-truth.csv', 'r') as f:
+with open('ref-split-cov-small-cov-no-truth.csv', 'r') as f:
     for line in f:
         if natee == -1:
             natee += 1

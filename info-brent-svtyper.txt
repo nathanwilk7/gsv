@@ -1,5 +1,0 @@
-https://github.com/hall-lab/svtyper
-./svtyper/svtyper -i /scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/lumpy_validated_sv.NA12878.nochr.vcf -B /scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/ont-random-bams/merge1/39.random.bam > test.vcf
-
-# debug
-./svtyper/svtyper-pdb.py -i /scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/lumpy_validated_sv.NA12878.nochr.vcf -B /scratch/ucgd/lustre/u1006375/sv_sensitivity_ont/ont-random-bams/merge1/39.random.bam
