@@ -1,1 +1,1 @@
-python gsv.py -b ../data/nanopore-NA12878.params.merged.bam -v ill.gts.vcf > test.vcf
+python ../gsv.py -b ../../data/nanopore-NA12878.params.merged.bam -v ../data/ill.gts.vcf > test.vcf

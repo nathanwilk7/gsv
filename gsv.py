@@ -1,17 +1,9 @@
-"""
-TODO: How to test funcs that depend on stuff, test directory with sample stuff? Or just create fake objects and add the needed fields
-TODO: VCF output print for real and file match up and take care of fields with values like True (IMPRECISE), do VCF stuff for real
-TODO: Deal with other svtypes besides DEL
-TODO: Make this python2 and python3 compatible
-"""
-
-#from __future__ import print_function # TODO: Python2
 import pdb # TODO: debug
 import pysam, argparse, re
 import cyvcf2
 
 # Constants and adjustable parameters
-# TODO: Make these easy to adjust via command line arguments
+# TODO: Make these easy to adjust via command line arguments, or avoid them altogether
 
 FETCH_FLANK = 200
 MIN_ALIGNED = 200 # 200 good, 250 same
@@ -92,13 +84,14 @@ def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     """
     return max(position + conf_int[0] - fetch_flank, 0), min(position + conf_int[1] + fetch_flank + 1, chrom_length)
 
-def fetch_one_loci_reads (input_bam, chrom, lower_bound, upper_bound):
+# TODO: Test with directory
+def fetch_one_locus_reads (input_bam, chrom, lower_bound, upper_bound):
     """
     Get the reads from the bam that are on the specified chromosome and 
      within the specified bounds.
     >>> read_names = ['natee1', 'natee2', 'natee1']
     >>> test_input_bam = TestInputBam(read_names)
-    >>> fetched_reads = fetch_one_loci_reads(test_input_bam, '1', 0, 1)
+    >>> fetched_reads = fetch_one_locus_reads(test_input_bam, '1', 0, 1)
     >>> len(fetched_reads['natee1'])
     2
     >>> len(fetched_reads['natee2'])
@@ -118,7 +111,8 @@ def fetch_one_loci_reads (input_bam, chrom, lower_bound, upper_bound):
 def add_reads (reads, reads_to_add):
     """
     Adds the read from reads_to_add to reads. Puts reads with the same name (splitters) 
-     into the same read_list and avoid adding reads again if they are already in reads.
+     into the same read_list and avoids adding reads again if they are already in reads.
+     Depends on == being True if two reads are the same read and False otherwise
     """
     for read_list in reads_to_add.values():
         for read in read_list:
@@ -145,11 +139,11 @@ def fetch_reads (input_bam, svtype, chrom, left_pos, left_conf_int, right_pos, r
     """
     Fetches all the reads from the bam at the given location using the parameters specified and the get_query_bounds function.
     """
-    left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, FETCH_FLANK, chrom_length)
-    left_reads = fetch_one_loci_reads(input_bam, chrom, left_lower_bound, left_upper_bound)
+    left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, fetch_flank, chrom_length)
+    left_reads = fetch_one_locus_reads(input_bam, chrom, left_lower_bound, left_upper_bound)
 
-    right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, FETCH_FLANK, chrom_length)
-    right_reads = fetch_one_loci_reads(input_bam, chrom, right_lower_bound, right_upper_bound)
+    right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, fetch_flank, chrom_length)
+    right_reads = fetch_one_locus_reads(input_bam, chrom, right_lower_bound, right_upper_bound)
 
     reads = {}
     reads = combine_reads(reads, left_reads, right_reads)
@@ -173,11 +167,19 @@ def fetch_inner_reads (input_bam, svtype, chrom, left_pos, left_conf_int, right_
     """
     # Chromosome length shouldn't matter since we're looking in between two breakpoints, so just set it something irrelevant
     left_upper_bound, right_lower_bound = get_inner_query_bounds(svtype, left_pos, left_conf_int, right_pos, right_conf_int, inner_read_fetch_flank)
-    inner_reads = fetch_one_loci_reads(input_bam, chrom, left_upper_bound, right_lower_bound)
+    inner_reads = fetch_one_locus_reads(input_bam, chrom, left_upper_bound, right_lower_bound)
     return inner_reads
 
-# TODO: Consider conf_int
-def spans_breakpoint (read, pos, min_aligned, min_pct_aligned):
+def spans_breakpoint (read, pos, conf_int, min_aligned, min_pct_aligned):
+    """
+    Returns True if the read as at least the minimum percent aligned with the reference around the position 
+     +/- the minimum number of aligned bases on each side. Otherwise, returns False.
+    """
+    lower_bound, upper_bound = max(0, pos + conf_int[0] - min_aligned), pos + min_aligned + conf_int[1]
+    conf_int_length = abs(conf_int[0] - conf_int[1])
+    return read.get_overlap(lower_bound, upper_bound) >= (conf_int_length + (2 * min_aligned)) * min_pct_aligned
+
+def spans_breakpoint_old (read, pos, min_aligned, min_pct_aligned):
     """
     Returns True if the read as at least the minimum percent aligned with the reference around the position 
      +/- the minimum number of aligned bases on each side. Otherwise, returns False.
@@ -185,8 +187,29 @@ def spans_breakpoint (read, pos, min_aligned, min_pct_aligned):
     lower_bound, upper_bound = max(0, pos - min_aligned), pos + min_aligned
     return read.get_overlap(lower_bound, upper_bound) >= 2 * min_aligned * min_pct_aligned
 
-# TODO: Consider conf_int
-def split_by_breakpoint (read_list, left_pos, right_pos, split_slop):
+def split_by_breakpoint (read_list, left_pos, left_conf_int, right_pos, right_conf_int, split_slop):
+    """
+    Returns True if a split happens on the left or side within the split slop of the corresponding 
+     position and if the other split aligns to the other side of the variant. Otherwise return False.
+     Assumes that the read_list contains all split pieces that should be considered.
+    """
+    for read in read_list:
+        split_left = read.reference_end >= left_pos + left_conf_int[0] - split_slop and read.reference_end <= left_pos + left_conf_int[1] + split_slop
+        split_right = read.reference_start >= right_pos + right_conf_int[0] - split_slop and read.reference_start <= right_pos + right_conf_int[1] + split_slop
+        if split_left or split_right:
+            for read2 in read_list:
+                if read == read2:
+                    continue
+                if split_left:
+                    if read2.reference_start >= right_pos + right_conf_int[0] - split_slop and read2.reference_start <= right_pos + right_conf_int[1] + split_slop:
+                        return True
+
+                if split_right:
+                    if read2.reference_end >= left_pos + left_conf_int[0] - split_slop and read2.reference_start <= left_pos + left_conf_int[1] + split_slop:
+                        return True
+    return False
+
+def split_by_breakpoint_old (read_list, left_pos, right_pos, split_slop):
     """
     Returns True if a split happens on the left or side within the split slop of the corresponding 
      position and if the other split aligns to the other side of the variant. Otherwise return False.
@@ -237,7 +260,29 @@ def split_by_breakpoint (read_list, left_pos, right_pos, split_slop):
     return False # If none of the reads in the list were valid splitters
 """
 
-def clipped_by_breakpoint (read, left_pos, right_pos, split_slop, extra_clip_slop):
+def clipped_by_breakpoint (read, left_pos, left_conf_int, right_pos, right_conf_int, split_slop, extra_clip_slop):
+    """
+    Returns True if the read was clipped on it's right or left side by the variant. Otherwise False.
+    """
+    right_side_clipped = read.reference_end >= left_pos + left_conf_int[0] - split_slop and read.reference_end <= left_pos + left_conf_int[1] + split_slop
+    left_side_clipped = read.reference_start >= right_pos + right_conf_int[0] - split_slop and read.reference_start <= right_pos + right_conf_int[1] + split_slop
+    if right_side_clipped:
+        cigar = read.cigartuples
+        if cigar[-1][0] == 4 or cigar[-1][0] == 5:
+            right_clip_size = cigar[-1][1]
+            if read.reference_end + right_clip_size >= left_pos + left_conf_int[1] + split_slop + extra_clip_slop:
+                return True
+
+    if left_side_clipped:
+        cigar = read.cigartuples
+        if cigar[0][0] == 4 or cigar[0][0] == 5:
+            left_clip_size = cigar[0][1]
+            if read.reference_start - left_clip_size <= right_pos + right_conf_int[0] - split_slop - extra_clip_slop:
+                return True
+
+    return False
+
+def clipped_by_breakpoint_old (read, left_pos, right_pos, split_slop, extra_clip_slop):
     """
     Returns True if the read was clipped on it's right or left side by the variant. Otherwise False.
     """
@@ -259,7 +304,34 @@ def clipped_by_breakpoint (read, left_pos, right_pos, split_slop, extra_clip_slo
 
     return False
 
-def get_coverage_diff_skip (read, left_pos, right_pos, chrom_length, read_depth_skip, read_depth_interval):
+def get_coverage_diff_skip (read, left_pos, left_conf_int, right_pos, right_conf_int, chrom_length, read_depth_skip, read_depth_interval):
+    """
+    Returns the ratio of the overlap with the reference on the inside of the variant versus the outside of the variant.
+     This version skips the specified amount around the positions.
+    """
+    # TODO: conf_int might extend too far into SV, could be better to have read_depth_interval parameter around pos
+    left_outside_outer = max(left_pos + left_conf_int[0] - read_depth_skip - read_depth_interval, 0)
+    left_outside_inner = max(left_pos + left_conf_int[0] - read_depth_skip, 0)
+    left_inside_inner = min(left_pos + left_conf_int[1] + read_depth_skip + 1, chrom_length)
+    left_inside_outer = min(left_pos + left_conf_int[1] + read_depth_skip + read_depth_interval + 1, chrom_length)
+    left_outside_overlap = read.get_overlap(left_outside_outer, left_outside_inner)
+    left_inside_overlap = read.get_overlap(left_inside_inner, left_inside_outer)
+
+    right_inside_inner = max(right_pos + right_conf_int[0] - read_depth_skip - read_depth_interval, 0)
+    right_inside_outer = max(right_pos + right_conf_int[0] - read_depth_skip, 0)
+    right_outside_inner = min(right_pos + right_conf_int[1] + read_depth_skip + 1, chrom_length)
+    right_outside_outer = min(right_pos + right_conf_int[1] + read_depth_skip + read_depth_interval + 1, chrom_length)
+    right_inside_overlap = read.get_overlap(right_inside_outer, right_inside_inner)
+    right_outside_overlap = read.get_overlap(right_outside_inner, right_outside_outer)
+    
+    outside_overlap = left_outside_overlap + right_outside_overlap
+    inside_overlap = left_inside_overlap + right_inside_overlap
+
+    if outside_overlap <= 0:
+        return 1.0
+    return float(inside_overlap) / float(outside_overlap)
+
+def get_coverage_diff_skip_old (read, left_pos, right_pos, chrom_length, read_depth_skip, read_depth_interval):
     """
     Returns the ratio of the overlap with the reference on the inside of the variant versus the outside of the variant.
      This version skips the specified amount around the positions.
@@ -286,7 +358,29 @@ def get_coverage_diff_skip (read, left_pos, right_pos, chrom_length, read_depth_
         return 1.0
     return float(inside_overlap) / float(outside_overlap)
 
-def get_coverage_diff (read, left_pos, right_pos, chrom_length, read_depth_interval):
+def get_coverage_diff (read, left_pos, left_conf_int, right_pos, right_conf_int, chrom_length, read_depth_interval):
+    """
+    Returns the ratio of the overlap with the reference on the inside of the variant versus the outside of the variant.
+     This version starts counting overlap from the positions.
+    """
+    left_outside = max(left_pos + left_conf_int[0] - read_depth_interval, 0)
+    left_inside = min(left_pos + left_conf_int[1] + read_depth_interval, chrom_length)
+    left_outside_overlap = read.get_overlap(left_outside, left_pos)
+    left_inside_overlap = read.get_overlap(left_pos, left_inside)
+
+    right_inside = max(right_pos + right_conf_int[0] - read_depth_interval, 0)
+    right_outside = min(right_pos + right_conf_int[1] + read_depth_interval, chrom_length)
+    right_inside_overlap = read.get_overlap(right_inside, right_pos)
+    right_outside_overlap = read.get_overlap(right_pos, right_outside)
+    
+    outside_overlap = left_outside_overlap + right_outside_overlap
+    inside_overlap = left_inside_overlap + right_inside_overlap
+
+    if outside_overlap <= 0:
+        return 1.0
+    return float(inside_overlap) / float(outside_overlap) 
+
+def get_coverage_diff_old (read, left_pos, right_pos, chrom_length, read_depth_interval):
     """
     Returns the ratio of the overlap with the reference on the inside of the variant versus the outside of the variant.
      This version starts counting overlap from the positions.
@@ -335,12 +429,45 @@ def get_coverage_diff_conf_int (read, left_pos, left_conf_int, right_pos, right_
         return 1.0
     return float(inside_overlap) / float(outside_overlap)
 
-def is_mismatched_over_sv (read, left_pos, right_pos, mismatch_slop, mismatch_pct):
+def is_mismatched_over_sv (read, left_pos, left_conf_int, right_pos, right_conf_int, mismatch_slop, mismatch_pct):
     """
     This function returns True if the read extends into the variant and has a mismatch 
      percentage higher than the specified one.
     """
-    enters_sv_from_left = read.reference_start <= left_pos + mismatch_slop
+    enters_sv_from_left = read.reference_start <= left_pos + left_conf_int[1] + mismatch_slop
+    enters_sv_from_right = read.reference_start >= left_pos + left_conf_int[1] + mismatch_slop
+    if not enters_sv_from_left and not enters_sv_from_right:
+        return False
+    if enters_sv_from_left:
+        length_over_sv = read.reference_end - (left_pos + left_conf_int[1] + mismatch_slop)
+        length_of_sv = (right_pos + right_conf_int[0] - mismatch_slop) - (left_pos + left_conf_int[1] + mismatch_slop)
+        min_length = max(min(length_over_sv, length_of_sv), 0)
+        if min_length == 0:
+            return False
+        matches = read.get_overlap(left_pos + left_conf_int[1] + mismatch_slop, left_pos + left_conf_int[1] + mismatch_slop + min_length)
+        mismatches = min_length - matches
+        if mismatches / min_length > mismatch_pct:
+            return True
+    
+    if enters_sv_from_right:
+        length_over_sv = (right_pos + right_conf_int[0] - mismatch_slop) - read.reference_start
+        length_of_sv = (right_pos + right_conf_int[0] - mismatch_slop) - (left_pos + left_conf_int[1] + mismatch_slop)
+        min_length = max(min(length_over_sv, length_of_sv), 0)
+        if min_length == 0:
+            return False
+        matches = read.get_overlap(right_pos + right_conf_int[0] - mismatch_slop - min_length, right_pos + right_conf_int[0] - mismatch_slop)
+        mismatches = min_length - matches
+        if mismatches / min_length > mismatch_pct:
+            return True
+            
+    return False
+
+def is_mismatched_over_sv_old (read, left_pos, right_pos, mismatch_slop, mismatch_pct):
+    """
+    This function returns True if the read extends into the variant and has a mismatch 
+     percentage higher than the specified one.
+    """
+    enters_sv_from_left = read.reference_start <= left_pos  + mismatch_slop
     enters_sv_from_right = read.reference_start >= left_pos + mismatch_slop
     if not enters_sv_from_left and not enters_sv_from_right:
         return False
@@ -368,7 +495,40 @@ def is_mismatched_over_sv (read, left_pos, right_pos, mismatch_slop, mismatch_pc
             
     return False
 
-def is_mismatched_over_sv_ver2 (read, left_pos, right_pos, mismatch_pct):
+def is_mismatched_over_sv_ver2 (read, left_pos, left_conf_int, right_pos, right_conf_int, mismatch_pct):
+    """
+    This function returns True if the read extends into the variant and has a mismatch 
+     percentage higher than the specified one.
+    """
+    enters_sv_from_left = read.reference_start <= left_pos + left_conf_int[1]
+    enters_sv_from_right = read.reference_start > left_pos + left_conf_int[1]
+    if not enters_sv_from_left and not enters_sv_from_right:
+        return False
+    if enters_sv_from_left:
+        length_over_sv = read.reference_end - left_pos + left_conf_int[1]
+        length_of_sv = (right_pos + right_conf_int[0]) - (left_pos + left_conf_int[1])
+        min_length = max(min(length_over_sv, length_of_sv), 0)
+        if min_length == 0:
+            return False
+        matches = read.get_overlap(left_pos + left_conf_int[1], left_pos + left_conf_int[1] + min_length)
+        mismatches = min_length - matches
+        if mismatches / min_length > mismatch_pct:
+            return True
+    
+    if enters_sv_from_right:
+        length_over_sv = right_pos + right_conf_int[0] - read.reference_start
+        length_of_sv = (right_pos + right_conf_int[0]) - (left_pos + left_conf_int[1])
+        min_length = max(min(length_over_sv, length_of_sv), 0)
+        if min_length == 0:
+            return False
+        matches = read.get_overlap(right_pos + right_conf_int[0] - min_length, right_pos + right_conf_int[0])
+        mismatches = min_length - matches
+        if mismatches / min_length > mismatch_pct:
+            return True
+            
+    return False
+
+def is_mismatched_over_sv_ver2_old (read, left_pos, right_pos, mismatch_pct):
     """
     This function returns True if the read extends into the variant and has a mismatch 
      percentage higher than the specified one.
@@ -400,6 +560,24 @@ def is_mismatched_over_sv_ver2 (read, left_pos, right_pos, mismatch_pct):
             return True
             
     return False
+
+def get_bases_possible_one_side (lower_bound, upper_bound):
+    return upper_bound - lower_bound
+
+def get_bases_possible (left_lower_bound, left_upper_bound, right_lower_bound, right_upper_bound):
+    return get_bases_possible_one_side(left_lower_bound, left_upper_bound), get_bases_possible_one_side(right_lower_bound, right_upper_bound) 
+    
+def get_num_bases_covered (read, lower_bound, upper_bound):
+    return read.get_overlap(lower_bound, upper_bound)
+
+def get_cov_pct_avg_base (bases_covered_actual, bases_covered_possible, read_count):
+    if bases_covered_possible > 0 and read_count > 0:
+        coverage_pct = bases_covered_actual / (bases_covered_possible * read_count)
+        avg_base_coverage = bases_covered_actual / bases_covered_possible
+    else:
+        coverage_pct = 0
+        avg_base_coverage = 0
+    return coverage_pct, avg_base_coverage
 
 def get_genotype (alt_support, ref_support, min_pct_het):
     """
@@ -559,8 +737,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         # TODO: left and right on different chromosomes?
         chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
 
-        # TODO: Use the 95% conf int instead to limit the size of this thing?
-        # TODO: left and right on different chromosomes?
         #chrom = variant.CHROM
         #svtype = variant.INFO.get('SVTYPE')
         #left_pos = variant.start
@@ -568,69 +744,76 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
         #left_conf_int = variant.INFO.get('CIPOS')
         #right_conf_int = variant.INFO.get('CIEND')
         #chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
-        
 
         # Get the reads around the variant on both sides
         reads = fetch_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
                             right_pos, right_conf_int, FETCH_FLANK, chrom_length)
+
+        # Get the reads in the middle of the variant
+        inner_reads = fetch_inner_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
+                                        right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
+
+        # Uses coverage and aligned bases to find coverage depth
         left_lower_bound, left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, FETCH_FLANK, chrom_length)
         right_lower_bound, right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, FETCH_FLANK, chrom_length)
-
-        # These numbers are used to genotype
-        ref_support = 0
-        alt_support = 0
+        ref_bases_covered_left_possible, ref_bases_covered_right_possible = get_bases_possible(left_lower_bound, left_upper_bound, 
+                                                                                                   right_lower_bound, right_upper_bound)
+        ref_bases_covered_left_actual, ref_bases_covered_right_actual = 0, 0
+        ref_left_read_count, ref_right_read_count = 0, 0
 
         # Save reads that span breakpoint
         reads_span_breakpoint = set()
 
-        # Uses coverage and aligned bases to find coverage depth
-        ref_bases_covered_left_possible = left_upper_bound - left_lower_bound
-        ref_bases_covered_right_possible = right_upper_bound - right_lower_bound
-        ref_bases_covered_left_actual = 0
-        ref_bases_covered_right_actual = 0
-        ref_left_read_count = 0
-        ref_right_read_count = 0
-        
+        # These numbers are used to genotype
+        # TODO: score struct, named tuple
+        ref_support = 0
+        alt_support = 0
         
         # TODO: Instead of ifs, get probabilities of support 
         # Extract support from individual reads
         for read_list in reads.values():
             for read in read_list:
-                if spans_breakpoint(read, left_pos, MIN_ALIGNED, MIN_PCT_ALIGNED):
+                # TODO: Refactor into named tuples so funcs can take these in
+                #options = {} # cmd options
+                #params = {} # svnumbers
+                #generic_feature_extractor(read, options, params)
+                if spans_breakpoint(read, left_pos, left_conf_int, MIN_ALIGNED, MIN_PCT_ALIGNED):
                     ref_support += 0.5
                     reads_span_breakpoint.add(read)
 
-                if spans_breakpoint(read, right_pos, MIN_ALIGNED, MIN_PCT_ALIGNED):
+                if spans_breakpoint(read, right_pos, right_conf_int, MIN_ALIGNED, MIN_PCT_ALIGNED):
                     ref_support += 0.5
                     reads_span_breakpoint.add(read)
 
-                if clipped_by_breakpoint(read, left_pos, right_pos, SPLIT_SLOP, EXTRA_CLIP_SLOP):
+                if clipped_by_breakpoint(read, left_pos, left_conf_int, right_pos, right_conf_int, SPLIT_SLOP, EXTRA_CLIP_SLOP):
                     alt_support += 0
 
                 #if is_mismatched_over_sv(read, left_pos, right_pos, MISMATCH_SLOP, MISMATCH_PCT):
-                if is_mismatched_over_sv_ver2(read, left_pos, right_pos, MISMATCH_PCT):
-                    alt_support += 1
+                if is_mismatched_over_sv_ver2(read, left_pos, left_conf_int, right_pos, right_conf_int, MISMATCH_PCT):
+                    alt_support += 0
 
                 #coverage_diff = get_coverage_diff_skip(read, left_pos, right_pos, chrom_length, READ_DEPTH_SKIP, READ_DEPTH_INTERVAL)
-                coverage_diff = get_coverage_diff(read, left_pos, right_pos, chrom_length, READ_DEPTH_INTERVAL)
+                coverage_diff = get_coverage_diff(read, left_pos, left_conf_int, right_pos, right_conf_int, chrom_length, READ_DEPTH_INTERVAL)
                 if coverage_diff >= 0.8:
                     ref_support += 0 # min(coverage_diff - 1, 2)
                 elif coverage_diff < 0.1:
                     alt_support += 0 # (1 - coverage_diff) * 0.20
 
-                read_ref_bases_covered_left_actual = read.get_overlap(left_lower_bound, left_upper_bound)
+                # Find the number of bases covered by this read on the left breakpoint
+                read_ref_bases_covered_left_actual = get_num_bases_covered(read, left_lower_bound, left_upper_bound)
                 if read_ref_bases_covered_left_actual > 0:
                     ref_left_read_count += 1
                     ref_bases_covered_left_actual += read_ref_bases_covered_left_actual
 
-                read_ref_bases_covered_right_actual = read.get_overlap(right_lower_bound, right_upper_bound)
+                # Find the number of bases covered by this read on the right breakpoint
+                read_ref_bases_covered_right_actual = get_num_bases_covered(read, right_lower_bound, right_upper_bound)
                 if read_ref_bases_covered_right_actual > 0:
                     ref_right_read_count += 1
                     ref_bases_covered_right_actual += read_ref_bases_covered_right_actual
 
         # If there are splitters that have pieces near both breakpoints, they're in the same read_list
         for read_list in reads.values():
-            if split_by_breakpoint(read_list, left_pos, right_pos, SPLIT_SLOP):
+            if split_by_breakpoint(read_list, left_pos, left_conf_int, right_pos, right_conf_int, SPLIT_SLOP):
                 alt_support += 1
                 
                 # If a read is classified as a splitter, then we don't want to give support to the reference for it
@@ -638,42 +821,25 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str):
                     if read in reads_span_breakpoint:
                         ref_support -= 0.0 # ignoring this does best on training set, 0.5 fives alt_het calls, but adds more het_alt calls
 
-        inner_reads = fetch_inner_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
-                                        right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
+        # Find the avg coverage per base for the region between the breakpoints
         inner_lower_bound, inner_upper_bound = get_inner_query_bounds(svtype, left_pos, left_conf_int, 
                                                                       right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
-
-        alt_bases_covered_possible = inner_upper_bound - inner_lower_bound
+        alt_bases_covered_possible = get_bases_possible_one_side(inner_lower_bound,inner_upper_bound)
         alt_bases_covered_actual = 0
         alt_read_count = 0
 
         for read_list in inner_reads.values():
             for read in read_list:
-                alt_bases_covered_actual += read.get_overlap(inner_lower_bound, inner_upper_bound)
+                alt_bases_covered_actual += get_num_bases_covered(read, inner_lower_bound, inner_upper_bound)
                 alt_read_count += 1
 
-        ref_read_count = (ref_left_read_count + ref_right_read_count) / 2
-                
-        if ref_bases_covered_left_possible > 0 and ref_left_read_count > 0:
-            ref_left_coverage_pct = ref_bases_covered_left_actual / (ref_bases_covered_left_possible * ref_left_read_count)
-            ref_left_avg_base_coverage = ref_bases_covered_left_actual / ref_bases_covered_left_possible
-        else:
-            ref_left_coverage_pct = 0
-            ref_left_avg_base_coverage = 0
-        if ref_bases_covered_right_possible > 0 and ref_right_read_count > 0:
-            ref_right_coverage_pct = ref_bases_covered_right_actual / (ref_bases_covered_right_possible * ref_right_read_count)
-            ref_right_avg_base_coverage = ref_bases_covered_right_actual / ref_bases_covered_right_possible
-        else:
-            ref_right_coverage_pct = 0
-            ref_right_avg_base_coverage = 0
+        ref_left_coverage_pct, ref_left_avg_base_coverage = get_cov_pct_avg_base(ref_bases_covered_left_actual, ref_bases_covered_left_possible, 
+                                                                                      ref_left_read_count)
+        ref_right_coverage_pct, ref_right_avg_base_coverage = get_cov_pct_avg_base(ref_bases_covered_right_actual, ref_bases_covered_right_possible, 
+                                                                                      ref_right_read_count)
         ref_avg_base_coverage = (ref_left_avg_base_coverage + ref_right_avg_base_coverage) / 2
 
-        if alt_bases_covered_possible > 0 and alt_read_count > 0:
-            alt_coverage_pct = alt_bases_covered_actual / (alt_bases_covered_possible * alt_read_count)
-            alt_avg_base_coverage = alt_bases_covered_actual / alt_bases_covered_possible
-        else:
-            alt_coverage_pct = 0
-            alt_avg_base_coverage = 0
+        alt_coverage_pct, alt_avg_base_coverage = get_cov_pct_avg_base(alt_bases_covered_actual, alt_bases_covered_possible, alt_read_count)
 
         # Genotype based on support for alternate and reference
         genotype = get_genotype(alt_support, ref_support, MIN_PCT_HET)
@@ -718,29 +884,3 @@ if __name__ == '__main__':
         input_bam_str = args.input_bam
         output_vcf_str = args.output_vcf
         genotype_variants(input_vcf_str, input_bam_str, output_vcf_str)
-
-
-### MISC ###
-
-"""
-# I to do some more refactoring to make this work well
-def get_section_bounds (svtype, pos_left, conf_int_left, chrom_length_left, pos_right, conf_int_right, chrom_length_right, fetch_flank, min_aligned):
-    query_bounds_left = max(pos_left + conf_int_left[0] - fetch_flank, 0), min(pos_left + conf_int_left[1] + fetch_flank + 1, chrom_length_left)
-    query_bounds_right = max(pos_right + conf_int_right[0] - fetch_flank, 0), min(pos_right + conf_int_right[1] + fetch_flank + 1, chrom_length_right)
-
-    reference_bounds_left = max(0, pos_left - min_aligned), pos_left + min_aligned
-    reference_bounds_right = max(0, pos_right - min_aligned), pos_right + min_aligned
-
-    splitter_bounds_left = pos_left - split_slop, pos_left + split_slop
-    splitter_bounds_right = pos_right - split_slop, pos_right + split_slop
-
-    return query_bounds_left, query_bounds_right, reference_bounds_left, reference_bounds_right, splitter_bounds_left, splitter_bounds_right
-
-left_query_bounds, right_query_bounds, left_reference_bounds, right_reference_bounds, left_splitter_bounds, right_splitter_bounds = get_section_bounds (svtype, left_pos, left_conf_int, chrom_length, right_pos, right_conf_int, chrom_length, FETCH_FLANK, MIN_ALIGNED)
-left_lower_bound, left_upper_bound = left_query_bounds
-right_lower_bound, right_upper_bound = right_query_bounds
-left_lower_ref, left_upper_ref = left_reference_bounds
-right_lower_ref, right_upper_ref = right_reference_bounds
-left_lower_split, left_upper_split = left_splittler_bounds
-right_lower_split, right_upper_split = right_splittler_bounds
-"""
