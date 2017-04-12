@@ -23,7 +23,7 @@ for line in sys.stdin:
         else:
            tns+=1
 
-print("tn:", tns)
-print("fn:", fns)
-print("tp:", tps)
-print("fp:", fps)
+print "tn:", tns
+print "fn:", fns
+print "tp:", tps
+print "fp:", fps
