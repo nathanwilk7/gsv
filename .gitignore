@@ -1,5 +1,4 @@
 *~
 __pycache__
-push-git-allow.sh
 *.pyc
-test.txt
+data/
