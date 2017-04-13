@@ -18,8 +18,6 @@ parser.add_argument('-o', '--output')
 args = parser.parse_args()
 
 truth_gts = {}
-import pdb
-pdb.set_trace()
 for variant in cyvcf2.VCF(args.truth_vcf):
     truth_gts[(variant.CHROM, variant.start)] = convert_cyvcf_gt_to_str(variant.genotypes)
 

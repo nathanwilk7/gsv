@@ -837,8 +837,8 @@ def csvify (sv_info, variant_features, pred_genotype):
     csv_str += str(sv_info.svtype) + ','
     csv_str += str(sv_info.left_pos) + ','
     csv_str += str(sv_info.right_pos) + ','
-    csv_str += str(sv_info.left_conf_int) + ','
-    csv_str += str(sv_info.right_conf_int) + ','
+    #csv_str += str(sv_info.left_conf_int) + ','
+    #csv_str += str(sv_info.right_conf_int) + ','
     csv_str += str(variant_features.left_breakpoint_spanners) + ','
     csv_str += str(variant_features.right_breakpoint_spanners) + ','
     csv_str += str(variant_features.avg_coverage_diff) + ','
@@ -960,7 +960,12 @@ def genotype_variants (args):
 
     if args.csv is not None:
         with open(args.csv, 'w') as f:
-            csv_header = ('chrom,svtype,left_pos,right_pos,left_conf_int,right_conf_int,left_breakpoint_spanners,right_breakpoint_spanners,avg_coverage_diff,'
+            #csv_header = ('chrom,svtype,left_pos,right_pos,left_conf_int,right_conf_int,left_breakpoint_spanners,right_breakpoint_spanners,avg_coverage_diff,'
+            #              'right_clippers,left_clippers,mismatched_over_sv,ref_bases_covered_left_possible,ref_bases_covered_left_actual,'
+            #              'ref_bases_covered_right_possible,ref_bases_covered_right_actual,ref_avg_base_coverage,ref_coverage_pct,'
+            #              'alt_bases_covered_possible,alt_bases_covered_actual,alt_avg_base_coverage,alt_coverage_pct,'
+            #              'left_splitters,right_splitters,splitter_spanners,pred_genotype')
+            csv_header = ('chrom,svtype,left_pos,right_pos,left_breakpoint_spanners,right_breakpoint_spanners,avg_coverage_diff,'
                           'right_clippers,left_clippers,mismatched_over_sv,ref_bases_covered_left_possible,ref_bases_covered_left_actual,'
                           'ref_bases_covered_right_possible,ref_bases_covered_right_actual,ref_avg_base_coverage,ref_coverage_pct,'
                           'alt_bases_covered_possible,alt_bases_covered_actual,alt_avg_base_coverage,alt_coverage_pct,'
