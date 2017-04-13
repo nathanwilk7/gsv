@@ -1,7 +1,6 @@
 import pdb # TODO: debug
 import pysam, argparse, re
 import cyvcf2
-from collections import namedtuple
 
 # Constants and adjustable parameters
 # TODO: Make these easy to adjust via command line arguments, or avoid them altogether
@@ -31,6 +30,31 @@ def get_parsed_args ():
     parser.add_argument('-f', '--fasta', help='Path to input FASTA file')
     return parser.parse_args()
 
+def read_header (input_vcf_str):
+    """
+    Returns the header of the input VCF file
+    """
+    header = ''
+    with open(input_vcf_str, 'r') as f:
+        for line in f:
+            if line[:2] == '##':
+                header += line
+            else:
+                break
+    # TODO: Make the columns legit
+    header += '#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	NA12878\n'
+    return header
+
+def write_output_vcf_header (output_vcf_str, header):
+    """
+    Writes the output VCF header to the specified filepath or standard out.
+    """
+    if output_vcf_str is not None:
+        with open(output_vcf_str, 'w') as f:
+            f.write(header)
+    else:
+        print(header, end='')
+
 def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     """
     Returns the bounds to query the BAM file around the given position/confidence 
@@ -43,6 +67,7 @@ def get_query_bounds (svtype, position, conf_int, fetch_flank, chrom_length):
     """
     return max(position + conf_int[0] - fetch_flank, 0), min(position + conf_int[1] + fetch_flank + 1, chrom_length)
 
+# TODO: Test with directory
 def fetch_one_locus_reads (input_bam, chrom, lower_bound, upper_bound):
     """
     Get the reads from the bam that are on the specified chromosome and 
@@ -275,29 +300,6 @@ def spans_breakpoint_mismatches (fa, bam, read, pos, conf_int, min_aligned, min_
     #new_cigar = get_new_cigar(fa, bam, read, lower_bound, upper_bound)
     num_matches = get_num_matches(fa, bam, read, lower_bound, upper_bound)
     return read.get_overlap(lower_bound, upper_bound) >= (conf_int_length + (2 * min_aligned)) * min_pct_aligned
-
-def spans_breakpoint_left (variant_features, read, sv_numbers, options):
-    """
-    Returns True if the read as at least the minimum percent aligned with the reference around the position 
-     +/- the minimum number of aligned bases on each side. Otherwise, returns False.
-    """
-    lower_bound, upper_bound = (max(0, sv_numbers.left_pos + sv_numbers.left_conf_int[0] - options.min_aligned), 
-                                sv_numbers.left_pos + options.min_aligned + sv_numbers.left_conf_int[1])
-    conf_int_length = abs(sv_numbers.left_conf_int[0] - sv_numbers.left_conf_int[1])
-    does_span_left_breakpoint = read.get_overlap(lower_bound, upper_bound) >= (conf_int_length + (2 * options.min_aligned)) * options.min_pct_aligned
-    if does_span_left_breakpoint:
-        variant_features.left_breakpoint_spanners += 1
-
-def spans_breakpoint_right (variant_features, read, sv_numbers, options):
-    """    Returns True if the read as at least the minimum percent aligned with the reference around the position 
-     +/- the minimum number of aligned bases on each side. Otherwise, returns False.
-    """
-    lower_bound, upper_bound = (max(0, sv_numbers.right_pos + sv_numbers.right_conf_int[0] - options.min_aligned), 
-                                sv_numbers.right_pos + options.min_aligned + sv_numbers.right_conf_int[1])
-    conf_int_length = abs(sv_numbers.right_conf_int[0] - sv_numbers.right_conf_int[1])
-    does_span_right_breakpoint = read.get_overlap(lower_bound, upper_bound) >= (conf_int_length + (2 * options.min_aligned)) * options.min_pct_aligned
-    if does_span_right_breakpoint:
-        variant_features.right_breakpoint_spanners += 1
 
 def spans_breakpoint (read, pos, conf_int, min_aligned, min_pct_aligned):
     """
@@ -735,19 +737,134 @@ def cyvcf_genotype (genotype_str):
         print('Genotype not implemented: ', genotype_str)
         exit()
 
-class VariantFeatures:
+class Variant:
     """
-    When features are extracted from read data, this object's fields keep track of the sum of features for the variant.
+    Used to store variant info for output VCF.
     """
-    def __init__(self):
-        self.left_breakpoint_spanners = 0
-        self.right_breakpoint_spanners = 0
+    def __init__ (self):
+        """
+        Sets up fields that should be used to output this
+        """
+        self.chrom = None
+        self.pos = None
+        self.id = None
+        self.ref = None
+        self.alt = None
+        self.qual = None
+        self.filter = None
+        self.info = {}
+        self.format = {}
 
+def write_variant ():
+    a = 1
+
+
+"""
+def write_variant (output_vcf_str, output_variant, genotype):
+    "#""
+    Write the variant to the output VCF or standard out.
+    "#""
+    if output_vcf_str is not None:
+        with open(output_vcf_str, 'a') as f:
+            f.write(output_variant.chrom + '\t')
+            f.write(str(output_variant.pos) + '\t')
+            f.write(output_variant.id + '\t')
+            f.write(output_variant.ref + '\t')
+            f.write(output_variant.alt + '\t')
+            f.write(output_variant.qual + '\t')
+            f.write(output_variant.filter + '\t')
+            for k, v in output_variant.info.items():
+                if isinstance(v, int) or isinstance(v, str):
+                    f.write('{}={}'.format(k, v) + ';')
+                else:
+                    f.write(k + '=')
+                    for i in range(len(v) - 1):
+                        f.write(str(v[i]) + ',')
+                    f.write(str(v[len(v)-1]) + ';')
+            f.write('\t')
+            temp_keys = output_variant.format.keys()
+            num_keys = len(temp_keys)
+            temp_count = 0
+            for k in temp_keys:
+                if temp_count >= num_keys - 1:
+                    break
+                temp_count += 1
+                f.write(k + ':')
+            f.write(k + '\t')
+            temp_count = 0
+            for k in temp_keys:
+                if temp_count >= num_keys - 1:
+                    break
+                temp_count += 1
+                f.write(str(output_variant.format[k]) + ':')
+            f.write(str(output_variant.format[k]) + '\n')
+    else:
+        print(output_variant.chrom, end='\t')
+        print(str(output_variant.pos), end='\t')
+        print(output_variant.id, end='\t')
+        print(output_variant.ref, end='\t')
+        print(output_variant.alt, end='\t')
+        print(output_variant.qual, end='\t')
+        print(output_variant.filter, end='\t')
+        for k, v in output_variant.info.items():
+            if k == 'IMPRECISE':
+                print(k, end=';')
+            elif isinstance(v, int) or isinstance(v, str):
+                print('{}={}'.format(k, v), end=';')
+            else:
+                print(k, end='=')
+                if len(v) > 0:
+                    for i in range(len(v) - 1):
+                        print(str(v[i]), end=',')
+                    print(str(v[len(v)-1]), end=';')
+        print('', end='\t')
+        print('GT', end='\t')
+        print(genotype)
+        #temp_keys = output_variant.format.keys()
+        #num_keys = len(temp_keys)
+        #temp_count = 0
+        #for k in temp_keys:
+        #    if temp_count >= num_keys - 1:
+        #        break
+        #    temp_count += 1
+        #    print(k, end=':')
+        #print(k, end='\t')
+        #temp_count = 0
+        #for k in temp_keys:
+        #    if temp_count >= num_keys - 1:
+        #        break
+        #    temp_count += 1
+        #    print(output_variant.format[k], end=':')
+        #print(output_variant.format[k], end='\n')    
+
+def replace_none (field):
+    "#""
+    Replace fields that are None with periods.
+    "#""
+    if field == None:
+        return '.'
+    else:
+        return field
+
+def replace_empty (_list):
+    "#""
+    Replaces empty lists with a period.
+    "#""
+    if len(_list) == 0:
+        return '.'
+    else:
+        return _list
+"""
 def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str, input_fasta_str):
     """
-    Genotype the variants specified in the VCF file using data from the BAM file. optional fasta file can be passed in.
+    Genotype the variants specified in the VCF file using data from the BAM file.
     """
+    # Read header from input VCF and write it to the output VCF
+    #header = read_header(input_vcf_str)
+    #write_output_vcf_header(output_vcf_str, header)
+
     # Set up the input VCF and input BAM
+    #input_vcf2 = pysam.VariantFile(input_vcf_str)
     input_vcf = cyvcf2.VCF(input_vcf_str)
 
     # TODO: multiple input bams/samples
@@ -756,27 +873,25 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str, input_fasta
     # Variants will be written to this
     output_vcf = cyvcf2.Writer(output_vcf_str, input_vcf)
 
-    # if a fasta file was provided, then read it in
     if input_fasta_str is not None:
         fa = pysam.FastaFile(input_fasta_str)
     else:
         fa = None
 
-    Options = namedtuple('Options', ['fetch_flank', 'min_aligned', 'min_pct_aligned', 'split_slop', 'read_depth_skip', 'read_depth_interval', 'mismatch_slop', 'mismatch_pct', 'extra_clip_slop', 'inner_read_fetch_flank'])
-    options = Options(fetch_flank=200, min_aligned=200, min_pct_aligned=0.80, 
-                      split_slop=300, read_depth_skip=50, read_depth_interval=50, 
-                      mismatch_slop=100, mismatch_pct=0.90, extra_clip_slop=1000, 
-                      inner_read_fetch_flank=20)
-        
     # Loop over all variants in input VCF file
+    #for variant2 in input_vcf2.fetch():
     for variant in input_vcf:
-        SVNumbers = namedtuple('SVNumber', ['chrom', 'svtype', 'left_pos', 'right_pos', 'left_conf_int', 'right_conf_int', 'chrom_length'])
-        sv_numbers = SVNumber(chrom=variant.CHROM, svtype=variant.INFO.get('SVTYPE'),
-                              left_pos=variant.start, right_pos=variant.end,
-                              left_conf_int=variant.INFO.get('CIPOS'), right_conf_int=variant.INFO.get('CIEND'),
-                              chrom_length=input_bam.lengths[input_bam.gettid(chrom)])
+        # Get variant info into local vars so this can be swapped out with different libraries
+        #chrom = variant2.chrom
+        #svtype = variant2.info['SVTYPE']
+        #left_pos = variant2.pos
+        #right_pos = variant2.info['END']
+        # TODO: Use the 95% conf int instead to limit the size of this thing?
+        #left_conf_int = variant2.info['CIPOS']
+        #right_conf_int = variant2.info['CIEND']
+        # TODO: left and right on different chromosomes?
+        #chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
 
-        # Get variant info into local vars
         chrom = variant.CHROM
         svtype = variant.INFO.get('SVTYPE')
         left_pos = variant.start
@@ -803,15 +918,6 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str, input_fasta
 
         # Save reads that span breakpoint
         reads_span_breakpoint = set()
-
-        variant_features = VariantFeatures
-
-        read_funcs = []
-        read_funcs.append(spans_breakpoint_left)
-        read_funcs.append(spans_breakpoint_right)
-        for read_func in read_funcs:
-            read_func(variant_features, read, sv_numbers, options)
-        
 
         # These numbers are used to genotype
         # TODO: score struct, named tuple
@@ -904,9 +1010,35 @@ def genotype_variants (input_vcf_str, input_bam_str, output_vcf_str, input_fasta
 
         # Write this variant to the output VCF
         output_vcf.write_record(variant)
-
     output_vcf.close()
     input_vcf.close()
+
+        #write_genotype(
+        # Set up output variant info
+        #output_variant = Variant()
+        #output_variant.chrom = variant.CHROM
+        #output_variant.pos = variant.start
+        #output_variant.id = variant.ID
+        #output_variant.ref = variant.REF
+        #output_variant.alt = variant.ALT[0]
+        #output_variant.qual = replace_none(variant.QUAL)
+        #output_variant.filter = replace_empty([variant.FILTER])
+        #output_variant.info = {}
+        #for k in dict(variant.INFO).keys():
+        #    output_variant.info[k] = variant.INFO[k]
+
+        #output_variant.chrom = variant2.chrom
+        #output_variant.pos = variant2.pos
+        #output_variant.id = variant2.id
+        #output_variant.ref = variant2.ref
+        #output_variant.alt = variant2.alts[0]
+        #output_variant.qual = replace_none(variant2.qual)
+        #output_variant.filter = replace_empty(variant2.filter)
+        #for k in variant2.info.keys():
+        #    output_variant.info[k] = variant2.info[k]
+
+        # Write this variant and its genotype
+        #write_variant(output_vcf_str, output_variant, genotype)
 
 if __name__ == '__main__':
     """
