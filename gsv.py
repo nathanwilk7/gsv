@@ -806,11 +806,11 @@ def is_mismatched_over_sv_ver2_old (read, left_pos, right_pos, mismatch_pct):
 
 def get_left_bounds_for_coverage (sv_info, options):
     return (max(0, sv_info.left_pos + sv_info.left_conf_int[0] - options.outer_read_fetch_flank), 
-            sv_info.left_pos + options.outer_read_fetch_flank + sv_info.left_conf_int[1])
+            sv_info.left_pos + sv_info.left_conf_int[0])
 
 def get_right_bounds_for_coverage (sv_info, options):
-    return (max(0, sv_info.right_pos + sv_info.right_conf_int[0] - options.outer_read_fetch_flank), 
-            sv_info.right_pos + options.outer_read_fetch_flank + sv_info.right_conf_int[1])
+    return (max(0, sv_info.right_pos + sv_info.right_conf_int[1]), 
+            sv_info.right_pos + sv_info.right_conf_int[1] + options.outer_read_fetch_flank)
 
 def get_bases_possible_one_side (lower_bound, upper_bound):
     return upper_bound - lower_bound
