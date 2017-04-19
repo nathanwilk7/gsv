@@ -2,6 +2,7 @@ import pdb # TODO: debug
 import pysam, argparse, re
 import cyvcf2
 from collections import namedtuple
+import math
 
 # Constants and adjustable parameters
 # TODO: Make these easy to adjust via command line arguments, or avoid them altogether
@@ -861,27 +862,152 @@ def csvify (sv_info, variant_features, pred_genotype):
     csv_str += str(pred_genotype) + '\n'
     return csv_str
 
-def get_alt_ref_support (variant_features):
+def get_ref_het_alt_support (variant_features):
     """
     Calculate alt and ref support from variant features
     """
-    return 0,0
+    ref_support, het_support, alt_support = 0, 0, 0
+    
+    if variant_features.left_breakpoint_spanners > 18:
+        ref_support += 1
+    elif variant_features.left_breakpoint_spanners < 2:
+        alt_support += 1
+    else:
+        het_support += 1
 
-def get_genotype (alt_support, ref_support, min_pct_het):
+    if variant_features.right_breakpoint_spanners > 16:
+        ref_support += 1
+    elif variant_features.right_breakpoint_spanners < 4:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.avg_coverage_diff > .7:
+        ref_support += 1
+    elif variant_features.avg_coverage_diff < .3:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.right_clippers < 2:
+        ref_support += 1
+    elif variant_features.right_clippers > 16:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.left_clippers < 5:
+        ref_support += 1
+    elif variant_features.left_clippers > 17:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.mismatched_over_sv < 2:
+        ref_support += 1
+    elif variant_features.mismatched_over_sv > 20:
+        alt_support += 1
+    else:
+        het_support += 1
+    
+    if variant_features.alt_avg_base_coverage > 16:
+        ref_support += 1
+    elif variant_features.alt_avg_base_coverage < 6:
+        alt_support += 1
+    else:
+        het_support += 1
+    
+    if variant_features.alt_coverage_pct > .75:
+        ref_support += 1
+    elif variant_features.alt_coverage_pct < .2:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.left_splitters < 2:
+        ref_support += 1
+    elif variant_features.left_splitters > 18:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.splitter_spanners > 20:
+        ref_support += 1
+    elif variant_features.splitter_spanners < 5:
+        alt_support += 1
+    else:
+        het_support += 1
+    
+    if variant_features.spanners > 35:
+        ref_support += 1
+    elif variant_features.spanners < 5:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.splitters < 2:
+        ref_support += 1
+    elif variant_features.splitters > 20:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    return ref_support, het_support, alt_support
+
+def get_genotype (ref_support, het_support, alt_support): #min_pct_het):
     """
     Returns the genotype based on the alternate and reference support.
     """
-    total_support = alt_support + ref_support
-    if total_support > 0:
-        if ref_support > total_support * min_pct_het and alt_support > total_support * min_pct_het:
-            genotype = '0/1'
-        elif alt_support > ref_support:
-            genotype = '1/1'
-        else:
-            genotype = '0/0'
+    max_support = max(ref_support, het_support, alt_support)
+    if het_support == max_support:
+        return '0/1'
+    elif alt_support == max_support:
+        return '1/1'
     else:
-        genotype = '1/1'
-    return genotype
+        return '0/0'
+    #total_support = alt_support + ref_support
+    #if total_support > 0:
+    #    if ref_support > total_support * min_pct_het and alt_support > total_support * min_pct_het:
+    #        genotype = '0/1'
+    #    elif alt_support > ref_support:
+    #        genotype = '1/1'
+    #    else:
+    #        genotype = '0/0'
+    #else:
+    #    genotype = '1/1'
+    #return genotype
+
+def genotype_eq (G, k, a, e):
+    """
+    G: 2 for HOM REF, 1 for ALT, 0 for HOM ALT
+    k: Total number of reads
+    a: Number of reads supporting the alternate
+    e: Estimated error at loci
+    
+    http://biorxiv.org/content/biorxiv/early/2017/02/01/105080.full.pdf
+    https://academic.oup.com/bioinformatics/article/27/21/2987/217423/A-statistical-framework-for-SNP-calling-mutation
+    """
+    return (-k * math.log(2) + (k - a) * math.log((2 - G) * e + G * (1 - e)) +
+            a * math.log((2 - G) * (1 - e) + G * e))
+
+def get_genotype_with_prob (num_total_reads, num_alt_reads):
+    """
+    Returns the genotype as 0/0 (HOM ALT), 0/1 (HET), or 1/1 (HOM REF) based on most likely genotype.
+    """
+    k = num_total_reads
+    a = num_alt_reads
+    e = 0.05
+    log_prob_hom_ref = genotype_eq(2, k, a, e)
+    log_prob_het = genotype_eq(1, k, a, e)
+    log_prob_hom_alt = genotype_eq(0, k, a, e)
+
+    # Call het if they're the same
+    if log_prob_het >= log_prob_hom_ref and log_prob_het >= log_prob_hom_alt:
+        return '0/1'
+    elif log_prob_hom_alt >= log_prob_hom_ref:
+        return '0/0'
+    else:
+        return '1/1'
 
 def cyvcf_genotype (genotype_str):
     if genotype_str == '0/0':
@@ -938,6 +1064,8 @@ class VariantFeatures:
         self.left_splitters = 0.0
         self.right_splitters = 0.0
         self.splitter_spanners = 0.0
+        self.spanners = 0.0
+        self.splitters = 0.0
 
 def genotype_variants (args):
     """
@@ -1167,11 +1295,15 @@ def genotype_variants (args):
 
         variant_features.alt_coverage_pct, variant_features.alt_avg_base_coverage = get_cov_pct_avg_base(variant_features.alt_bases_covered_actual, 
                                                                                                          variant_features.alt_bases_covered_possible, alt_read_count)
+
+        variant_features.spanners = variant_features.left_breakpoint_spanners + variant_features.right_breakpoint_spanners
+        variant_features.splitters = variant_features.left_splitters + variant_features.right_splitters
+
         # get alt/ref support from variant features
-        alt_support, ref_support = get_alt_ref_support(variant_features)
+        ref_support, het_support, alt_support = get_ref_het_alt_support(variant_features)
 
         # Genotype based on support for alternate and reference
-        genotype = get_genotype(alt_support, ref_support, MIN_PCT_HET)
+        genotype = get_genotype(ref_support, het_support, alt_support) #MIN_PCT_HET)
 
         # Save the genotype to this variant
         variant.genotypes = cyvcf_genotype(genotype)
