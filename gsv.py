@@ -1129,7 +1129,7 @@ def genotype_variants (args):
                       mismatch_slop=100, mismatch_pct=0.90, 
                       extra_clip_slop=1000, 
                       inner_read_fetch_flank=20, 
-                      outer_read_fetch_flank=20)
+                      outer_read_fetch_flank=100)
         
     # Loop over all variants in input VCF file
     for variant in input_vcf:
