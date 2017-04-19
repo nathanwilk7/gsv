@@ -804,12 +804,22 @@ def is_mismatched_over_sv_ver2_old (read, left_pos, right_pos, mismatch_pct):
             
     return False
 
+def get_left_bounds_for_coverage (sv_info, options):
+    return (max(0, sv_info.left_pos + sv_info.left_conf_int[0] - options.outer_read_fetch_flank), 
+            sv_info.left_pos + options.outer_read_fetch_flank + sv_info.left_conf_int[1])
+
+def get_right_bounds_for_coverage (sv_info, options):
+    return (max(0, sv_info.right_pos + sv_info.right_conf_int[0] - options.outer_read_fetch_flank), 
+            sv_info.right_pos + options.outer_read_fetch_flank + sv_info.right_conf_int[1])
+
 def get_bases_possible_one_side (lower_bound, upper_bound):
     return upper_bound - lower_bound
 
-def get_bases_possible (variant_features, sv_info):
-    variant_features.ref_bases_covered_left_possible = get_bases_possible_one_side(sv_info.left_lower_bound, sv_info.left_upper_bound)
-    variant_features.ref_bases_covered_right_possible = get_bases_possible_one_side(sv_info.right_lower_bound, sv_info.right_upper_bound)
+def get_bases_possible (variant_features, sv_info, options):
+    left_lower_bound_possible, left_upper_bound_possible = get_left_bounds_for_coverage(sv_info, options)
+    right_lower_bound_possible, right_upper_bound_possible = get_right_bounds_for_coverage(sv_info, options)
+    variant_features.ref_bases_covered_left_possible = get_bases_possible_one_side(left_lower_bound_possible, left_upper_bound_possible)
+    variant_features.ref_bases_covered_right_possible = get_bases_possible_one_side(right_lower_bound_possible, right_upper_bound_possible)
 
 def get_inner_bases_possible (variant_features, sv_info):
     variant_features.alt_bases_covered_possible = get_bases_possible_one_side(sv_info.inner_lower_bound, sv_info.inner_upper_bound)
@@ -822,10 +832,8 @@ def get_num_bases_covered_old (variant_features, read, sv_info, options):
     variant_features.ref_bases_covered_right_actual += read.get_overlap(sv_info.right_lower_bound, sv_info.right_upper_bound)
 
 def get_num_bases_covered (variant_features, read, sv_info, options):
-    ref_bases_left_lower_bound, ref_bases_left_upper_bound = (max(0, sv_info.left_pos + sv_info.left_conf_int[0] - options.outer_read_fetch_flank), 
-                                                              sv_info.left_pos + options.outer_read_fetch_flank + sv_info.left_conf_int[1])
-    ref_bases_right_lower_bound, ref_bases_right_upper_bound = (max(0, sv_info.right_pos + sv_info.right_conf_int[0] - options.outer_read_fetch_flank),       
-                                                                sv_info.right_pos + options.outer_read_fetch_flank + sv_info.right_conf_int[1])
+    ref_bases_left_lower_bound, ref_bases_left_upper_bound = get_left_bounds_for_coverage(sv_info, options)
+    ref_bases_right_lower_bound, ref_bases_right_upper_bound = get_right_bounds_for_coverage(sv_info, options)
     variant_features.ref_bases_covered_left_actual += read.get_overlap(ref_bases_left_lower_bound, ref_bases_left_upper_bound)
     variant_features.ref_bases_covered_right_actual += read.get_overlap(ref_bases_right_lower_bound, ref_bases_right_upper_bound)
 
@@ -1216,7 +1224,7 @@ def genotype_variants (args):
             variant_features.avg_coverage_diff = sum(variant_features.coverage_diff) / float(len(variant_features.coverage_diff))
         else:
             variant_features.avg_coverage_diff = 1.0
-        get_bases_possible(variant_features, sv_info)
+        get_bases_possible(variant_features, sv_info, options)
         get_inner_bases_possible(variant_features, sv_info)
 
         ref_left_coverage_pct, ref_left_avg_base_coverage = get_cov_pct_avg_base(variant_features.ref_bases_covered_left_actual, 
