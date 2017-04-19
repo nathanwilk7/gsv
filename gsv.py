@@ -817,9 +817,17 @@ def get_inner_bases_possible (variant_features, sv_info):
 def get_bases_possible_old (left_lower_bound, left_upper_bound, right_lower_bound, right_upper_bound):
     return get_bases_possible_one_side(left_lower_bound, left_upper_bound), get_bases_possible_one_side(right_lower_bound, right_upper_bound) 
     
-def get_num_bases_covered (variant_features, read, sv_info, options):
+def get_num_bases_covered_old (variant_features, read, sv_info, options):
     variant_features.ref_bases_covered_left_actual += read.get_overlap(sv_info.left_lower_bound, sv_info.left_upper_bound)
     variant_features.ref_bases_covered_right_actual += read.get_overlap(sv_info.right_lower_bound, sv_info.right_upper_bound)
+
+def get_num_bases_covered (variant_features, read, sv_info, options):
+    ref_bases_left_lower_bound, ref_bases_left_upper_bound = (max(0, sv_info.left_pos + sv_info.left_conf_int[0] - options.outer_read_fetch_flank), 
+                                                              sv_info.left_pos + options.outer_read_fetch_flank + sv_info.left_conf_int[1])
+    ref_bases_right_lower_bound, ref_bases_right_upper_bound = (max(0, sv_info.right_pos + sv_info.right_conf_int[0] - options.outer_read_fetch_flank),       
+                                                                sv_info.right_pos + options.outer_read_fetch_flank + sv_info.right_conf_int[1])
+    variant_features.ref_bases_covered_left_actual += read.get_overlap(ref_bases_left_lower_bound, ref_bases_left_upper_bound)
+    variant_features.ref_bases_covered_right_actual += read.get_overlap(ref_bases_right_lower_bound, ref_bases_right_upper_bound)
 
 def get_inner_num_bases_covered (variant_features, inner_read, sv_info, options):
     variant_features.alt_bases_covered_actual += inner_read.get_overlap(sv_info.inner_lower_bound, sv_info.inner_upper_bound)
@@ -993,11 +1001,11 @@ def genotype_eq (G, k, a, e):
     return (-k * math.log(2) + (k - a) * math.log((2 - G) * e + G * (1 - e)) +
             a * math.log((2 - G) * (1 - e) + G * e))
 
-def get_genotype_with_prob (num_total_reads, num_alt_reads):
+def get_genotype_with_prob (num_ref_reads, num_alt_reads):
     """
     Returns the genotype as 0/0 (HOM ALT), 0/1 (HET), or 1/1 (HOM REF) based on most likely genotype.
     """
-    k = num_total_reads
+    k = num_ref_reads + num_alt_reads
     a = num_alt_reads
     e = 0.05
     log_prob_hom_ref = genotype_eq(2, k, a, e)
@@ -1008,9 +1016,9 @@ def get_genotype_with_prob (num_total_reads, num_alt_reads):
     if log_prob_het >= log_prob_hom_ref and log_prob_het >= log_prob_hom_alt:
         return '0/1'
     elif log_prob_hom_alt >= log_prob_hom_ref:
-        return '0/0'
-    else:
         return '1/1'
+    else:
+        return '0/0'
 
 def cyvcf_genotype (genotype_str):
     if genotype_str == '0/0':
@@ -1104,7 +1112,7 @@ def genotype_variants (args):
             f.write(csv_header + '\n')
 
     Options = namedtuple('Options', ['fetch_flank', 'min_aligned', 'min_pct_aligned', 'split_slop', 'read_depth_skip', 'read_depth_interval', 
-                                     'mismatch_slop', 'mismatch_pct', 'extra_clip_slop', 'inner_read_fetch_flank'])
+                                     'mismatch_slop', 'mismatch_pct', 'extra_clip_slop', 'inner_read_fetch_flank', 'outer_read_fetch_flank'])
     # TODO: set these via cmd args
     options = Options(fetch_flank=200, 
                       min_aligned=200, min_pct_aligned=0.80, 
@@ -1112,7 +1120,8 @@ def genotype_variants (args):
                       read_depth_skip=50, read_depth_interval=50, 
                       mismatch_slop=100, mismatch_pct=0.90, 
                       extra_clip_slop=1000, 
-                      inner_read_fetch_flank=20)
+                      inner_read_fetch_flank=20, 
+                      outer_read_fetch_flank=20)
         
     # Loop over all variants in input VCF file
     for variant in input_vcf:
@@ -1224,10 +1233,12 @@ def genotype_variants (args):
         variant_features.splitters = variant_features.left_splitters + variant_features.right_splitters
 
         # get alt/ref support from variant features
-        ref_support, het_support, alt_support = get_ref_het_alt_support(variant_features)
+        #ref_support, het_support, alt_support = get_ref_het_alt_support(variant_features)
 
         # Genotype based on support for alternate and reference
-        genotype = get_genotype(ref_support, het_support, alt_support) #MIN_PCT_HET)
+        #genotype = get_genotype(ref_support, het_support, alt_support) #MIN_PCT_HET)
+
+        genotype = get_genotype_with_prob(variant_features.spanners, variant_features.splitters)
 
         # Save the genotype to this variant
         variant.genotypes = cyvcf_genotype(genotype)
