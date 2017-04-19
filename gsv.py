@@ -2,6 +2,7 @@ import pdb # TODO: debug
 import pysam, argparse, re
 import cyvcf2
 from collections import namedtuple
+import math
 
 # Constants and adjustable parameters
 # TODO: Make these easy to adjust via command line arguments, or avoid them altogether
@@ -390,6 +391,9 @@ def split_by_breakpoint_old (read_list, left_pos, right_pos, split_slop):
                     if read2.reference_end>= left_pos - split_slop and read2.reference_start<= left_pos + split_slop:
                         return True
     return False
+
+# Save this because i may need to go back to SA tags in the end...
+
 """
         if read.has_tag('SA'):
             split_left = read.reference_end >= left_pos - split_slop and read.reference_end <= left_pos + split_slop
@@ -861,27 +865,152 @@ def csvify (sv_info, variant_features, pred_genotype):
     csv_str += str(pred_genotype) + '\n'
     return csv_str
 
-def get_alt_ref_support (variant_features):
+def get_ref_het_alt_support (variant_features):
     """
     Calculate alt and ref support from variant features
     """
-    return 0,0
+    ref_support, het_support, alt_support = 0, 0, 0
+    
+    if variant_features.left_breakpoint_spanners > 18:
+        ref_support += 1
+    elif variant_features.left_breakpoint_spanners < 2:
+        alt_support += 1
+    else:
+        het_support += 1
 
-def get_genotype (alt_support, ref_support, min_pct_het):
+    if variant_features.right_breakpoint_spanners > 16:
+        ref_support += 1
+    elif variant_features.right_breakpoint_spanners < 4:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.avg_coverage_diff > .7:
+        ref_support += 1
+    elif variant_features.avg_coverage_diff < .3:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.right_clippers < 2:
+        ref_support += 1
+    elif variant_features.right_clippers > 16:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.left_clippers < 5:
+        ref_support += 1
+    elif variant_features.left_clippers > 17:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.mismatched_over_sv < 2:
+        ref_support += 1
+    elif variant_features.mismatched_over_sv > 20:
+        alt_support += 1
+    else:
+        het_support += 1
+    
+    if variant_features.alt_avg_base_coverage > 16:
+        ref_support += 1
+    elif variant_features.alt_avg_base_coverage < 6:
+        alt_support += 1
+    else:
+        het_support += 1
+    
+    if variant_features.alt_coverage_pct > .75:
+        ref_support += 1
+    elif variant_features.alt_coverage_pct < .2:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.left_splitters < 2:
+        ref_support += 1
+    elif variant_features.left_splitters > 18:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.splitter_spanners > 20:
+        ref_support += 1
+    elif variant_features.splitter_spanners < 5:
+        alt_support += 1
+    else:
+        het_support += 1
+    
+    if variant_features.spanners > 35:
+        ref_support += 1
+    elif variant_features.spanners < 5:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    if variant_features.splitters < 2:
+        ref_support += 1
+    elif variant_features.splitters > 20:
+        alt_support += 1
+    else:
+        het_support += 1
+
+    return ref_support, het_support, alt_support
+
+def get_genotype (ref_support, het_support, alt_support): #min_pct_het):
     """
     Returns the genotype based on the alternate and reference support.
     """
-    total_support = alt_support + ref_support
-    if total_support > 0:
-        if ref_support > total_support * min_pct_het and alt_support > total_support * min_pct_het:
-            genotype = '0/1'
-        elif alt_support > ref_support:
-            genotype = '1/1'
-        else:
-            genotype = '0/0'
+    max_support = max(ref_support, het_support, alt_support)
+    if het_support == max_support:
+        return '0/1'
+    elif alt_support == max_support:
+        return '1/1'
     else:
-        genotype = '1/1'
-    return genotype
+        return '0/0'
+    #total_support = alt_support + ref_support
+    #if total_support > 0:
+    #    if ref_support > total_support * min_pct_het and alt_support > total_support * min_pct_het:
+    #        genotype = '0/1'
+    #    elif alt_support > ref_support:
+    #        genotype = '1/1'
+    #    else:
+    #        genotype = '0/0'
+    #else:
+    #    genotype = '1/1'
+    #return genotype
+
+def genotype_eq (G, k, a, e):
+    """
+    G: 2 for HOM REF, 1 for ALT, 0 for HOM ALT
+    k: Total number of reads
+    a: Number of reads supporting the alternate
+    e: Estimated error at loci
+    
+    http://biorxiv.org/content/biorxiv/early/2017/02/01/105080.full.pdf
+    https://academic.oup.com/bioinformatics/article/27/21/2987/217423/A-statistical-framework-for-SNP-calling-mutation
+    """
+    return (-k * math.log(2) + (k - a) * math.log((2 - G) * e + G * (1 - e)) +
+            a * math.log((2 - G) * (1 - e) + G * e))
+
+def get_genotype_with_prob (num_total_reads, num_alt_reads):
+    """
+    Returns the genotype as 0/0 (HOM ALT), 0/1 (HET), or 1/1 (HOM REF) based on most likely genotype.
+    """
+    k = num_total_reads
+    a = num_alt_reads
+    e = 0.05
+    log_prob_hom_ref = genotype_eq(2, k, a, e)
+    log_prob_het = genotype_eq(1, k, a, e)
+    log_prob_hom_alt = genotype_eq(0, k, a, e)
+
+    # Call het if they're the same
+    if log_prob_het >= log_prob_hom_ref and log_prob_het >= log_prob_hom_alt:
+        return '0/1'
+    elif log_prob_hom_alt >= log_prob_hom_ref:
+        return '0/0'
+    else:
+        return '1/1'
 
 def cyvcf_genotype (genotype_str):
     if genotype_str == '0/0':
@@ -938,6 +1067,8 @@ class VariantFeatures:
         self.left_splitters = 0.0
         self.right_splitters = 0.0
         self.splitter_spanners = 0.0
+        self.spanners = 0.0
+        self.splitters = 0.0
 
 def genotype_variants (args):
     """
@@ -995,28 +1126,12 @@ def genotype_variants (args):
         sv_info.chrom_length = input_bam.lengths[input_bam.gettid(variant.CHROM)]
 
         variant_features = VariantFeatures()
-        # Get variant info into local vars
-        #chrom = variant.CHROM
-        #svtype = variant.INFO.get('SVTYPE')
-        #left_pos = variant.start
-        #right_pos = variant.end # variant.INFO.get('END')
-        #left_conf_int = variant.INFO.get('CIPOS')
-        #right_conf_int = variant.INFO.get('CIEND')
-        #chrom_length = input_bam.lengths[input_bam.gettid(chrom)]
 
         # Get the reads around the variant on both sides
         reads = fetch_reads(input_bam, sv_info, options)
 
         # Get the reads in the middle of the variant
-        #inner_reads = fetch_inner_reads(input_bam, svtype, chrom, left_pos, left_conf_int, 
-        #                                right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
         inner_reads = fetch_inner_reads(input_bam, sv_info, options)
-
-        # Uses coverage and aligned bases to find coverage depth
-        #sv_info.left_lower_bound, sv_info.left_upper_bound = get_query_bounds(svtype, left_pos, left_conf_int, FETCH_FLANK, chrom_length)
-        #sv_info.right_lower_bound, sv_info.right_upper_bound = get_query_bounds(svtype, right_pos, right_conf_int, FETCH_FLANK, chrom_length)
-        #ref_bases_covered_left_actual, ref_bases_covered_right_actual = 0, 0
-        #ref_left_read_count, ref_right_read_count = 0, 0
 
         # Save reads that span breakpoint
         reads_span_breakpoint = set()
@@ -1041,7 +1156,6 @@ def genotype_variants (args):
         # functions that need the fasta file to work
         fasta_funcs = []
 
-        #pdb.set_trace()
         # Extract support from individual reads
         for read_list in reads.values():
             for read in read_list:
@@ -1088,68 +1202,6 @@ def genotype_variants (args):
                 for inner_read_func in inner_read_funcs:
                     inner_read_func(variant_features, inner_read, sv_info, options)
 
-                #if spans_breakpoint(read, left_pos, left_conf_int, MIN_ALIGNED, MIN_PCT_ALIGNED):
-                #    ref_support += 0.5
-                #    reads_span_breakpoint.add(read)
-
-                #if spans_breakpoint(read, right_pos, right_conf_int, MIN_ALIGNED, MIN_PCT_ALIGNED):
-                #    ref_support += 0.5
-                #    reads_span_breakpoint.add(read)
-                
-                #if fa is not None:
-                #    if spans_breakpoint_mismatches (fa, input_bam, read, left_pos, left_conf_int, MIN_ALIGNED, MIN_PCT_ALIGNED):
-                #        ref_support += 0
-                #    if spans_breakpoint_mismatches (fa, input_bam, read, right_pos, right_conf_int, MIN_ALIGNED, MIN_PCT_ALIGNED):
-                #        ref_support += 0
-
-                #if clipped_by_breakpoint_old(read, left_pos, left_conf_int, right_pos, right_conf_int, SPLIT_SLOP, EXTRA_CLIP_SLOP):
-                #    alt_support += 0
-
-                ##if is_mismatched_over_sv(read, left_pos, right_pos, MISMATCH_SLOP, MISMATCH_PCT):
-                #if is_mismatched_over_sv_ver2(read, left_pos, left_conf_int, right_pos, right_conf_int, MISMATCH_PCT):
-                #    alt_support += 0
-
-                ##coverage_diff = get_coverage_diff_skip(read, left_pos, right_pos, chrom_length, READ_DEPTH_SKIP, READ_DEPTH_INTERVAL)
-                #coverage_diff = get_coverage_diff_old(read, left_pos, left_conf_int, right_pos, right_conf_int, chrom_length, READ_DEPTH_INTERVAL)
-                #if coverage_diff >= 0.8:
-                #    ref_support += 0 # min(coverage_diff - 1, 2)
-                #elif coverage_diff < 0.1:
-                #    alt_support += 0 # (1 - coverage_diff) * 0.20
-
-                # Find the number of bases covered by this read on the left breakpoint
-                #read_ref_bases_covered_left_actual = get_num_bases_covered(read, left_lower_bound, left_upper_bound)
-                #if read_ref_bases_covered_left_actual > 0:
-                #    ref_left_read_count += 1
-                #    ref_bases_covered_left_actual += read_ref_bases_covered_left_actual
-
-                # Find the number of bases covered by this read on the right breakpoint
-                #read_ref_bases_covered_right_actual = get_num_bases_covered(read, right_lower_bound, right_upper_bound)
-                #if read_ref_bases_covered_right_actual > 0:
-                #    ref_right_read_count += 1
-                #    ref_bases_covered_right_actual += read_ref_bases_covered_right_actual
-
-        # If there are splitters that have pieces near both breakpoints, they're in the same read_list
-        #for read_list in reads.values():
-        #    if split_by_breakpoint(read_list, left_pos, left_conf_int, right_pos, right_conf_int, SPLIT_SLOP):
-        #        alt_support += 1
-                
-                # If a read is classified as a splitter, then we don't want to give support to the reference for it
-                #for read in read_list:
-                #    if read in reads_span_breakpoint:
-                #        ref_support -= 0.0 # ignoring this does best on training set, 0.5 fives alt_het calls, but adds more het_alt calls
-
-        # Find the avg coverage per base for the region between the breakpoints
-        #inner_lower_bound, inner_upper_bound = get_inner_query_bounds(svtype, left_pos, left_conf_int, 
-        #                                                              right_pos, right_conf_int, INNER_READ_FETCH_FLANK)
-        #alt_bases_covered_possible = get_bases_possible_one_side(inner_lower_bound,inner_upper_bound)
-        #alt_bases_covered_actual = 0
-        #alt_read_count = 0
-
-        #for read_list in inner_reads.values():
-        #    for read in read_list:
-        #        alt_bases_covered_actual += get_num_bases_covered(read, inner_lower_bound, inner_upper_bound)
-        #        alt_read_count += 1
-
         # post processing
         if float(len(variant_features.coverage_diff)) != 0:
             variant_features.avg_coverage_diff = sum(variant_features.coverage_diff) / float(len(variant_features.coverage_diff))
@@ -1167,11 +1219,15 @@ def genotype_variants (args):
 
         variant_features.alt_coverage_pct, variant_features.alt_avg_base_coverage = get_cov_pct_avg_base(variant_features.alt_bases_covered_actual, 
                                                                                                          variant_features.alt_bases_covered_possible, alt_read_count)
+
+        variant_features.spanners = variant_features.left_breakpoint_spanners + variant_features.right_breakpoint_spanners
+        variant_features.splitters = variant_features.left_splitters + variant_features.right_splitters
+
         # get alt/ref support from variant features
-        alt_support, ref_support = get_alt_ref_support(variant_features)
+        ref_support, het_support, alt_support = get_ref_het_alt_support(variant_features)
 
         # Genotype based on support for alternate and reference
-        genotype = get_genotype(alt_support, ref_support, MIN_PCT_HET)
+        genotype = get_genotype(ref_support, het_support, alt_support) #MIN_PCT_HET)
 
         # Save the genotype to this variant
         variant.genotypes = cyvcf_genotype(genotype)

@@ -2,3 +2,9 @@
 __pycache__
 *.pyc
 data/
+sv2/
+sniffles/
+smrt-sv/
+smrt-sv-backup/
+svtyper/
+modded-svtyper/
