@@ -15,7 +15,7 @@ alts[['splitters']] = alts[['left_splitters']] + alts[['right_splitters']]
 
 # histogram analysis
 ## Prepare data for input to barplot
-field.name = 'splitters'
+field.name = 'ref_avg_base_coverage'
 breaks <- pretty(range(c(refs[field.name], 
                          hets[field.name], 
                          alts[field.name])), 
