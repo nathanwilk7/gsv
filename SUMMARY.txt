@@ -1,0 +1,9 @@
+gsv.py currently calculates a bunch of features pertaining to genotyping structural variation. The features currently used in genotyping are spanners, splitters, and coverage depth. However, every time I add a feature my predictive power goes down. This may mean the features aren't helpful but more likely the parameters just need to be tuned. There are various scripts to test and evaluate performance.
+
+The next steps I am planning on taking are to compare the performace of my genotyping with others like sniffles, sv2, smrt-sv, and nanosv. I started down this road but wasted a lot of time trying to get sv2 and smrt-sv to run correctly. After comparison, I would plan on tuning my code to perform as well and possible and verify that the code generalizes to different data sets.
+
+Here are some other things in the pipeline:
+Testing
+Support other sv types
+Python2/3
+Multiple samples
